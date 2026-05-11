@@ -3,23 +3,26 @@
 ## Stack
 
 This is a **content repository**, not a code project. There is no package.json, no
-build step, no test suite, no lint config. Each skill is a folder at the repo root
-with a `SKILL.md` file (YAML frontmatter `name`, `description`, plus a markdown
-instruction body) and optional auxiliary `.md` files.
+build step, no test suite, no lint config. Each skill is a folder inside a
+category folder (`development/`, `project-management/`, `meta/`, …) at the repo
+root, with a `SKILL.md` file (YAML frontmatter `name`, `description`, plus a
+markdown instruction body) and optional auxiliary `.md` files.
 
 Layout:
 
 ```
 /
 ├── README.md                         # repo overview, install instructions
-├── <skill-name>/
-│   ├── SKILL.md                      # required: frontmatter + instructions
-│   └── <auxiliary>.md                # optional: longer references the skill points to
+├── <category>/
+│   └── <skill-name>/
+│       ├── SKILL.md                  # required: frontmatter + instructions
+│       └── <auxiliary>.md            # optional: longer references the skill points to
 └── ...
 ```
 
-`<skill-name>` is always **kebab-case** and matches the `name` in `SKILL.md`'s
-frontmatter exactly.
+`<category>` and `<skill-name>` are both **kebab-case**, lowercase, ASCII-only.
+`<skill-name>` matches the `name` in `SKILL.md`'s frontmatter exactly. There is
+no `category` field in frontmatter — the path is the single source of truth.
 
 ## Validation (no test suite — content checks only)
 
@@ -30,9 +33,13 @@ the following manual sanity checks before opening a PR:
    block: `---` line, `name: <kebab-case>` line, `description: <one-line>` line,
    `---` close line, blank line, then the markdown body.
 2. The folder name matches the `name` in frontmatter exactly.
-3. The instruction body is at least a few sentences long — empty / placeholder
+3. The skill folder lives inside a category folder (e.g. `development/<skill>/`,
+   not `<skill>/` at the repo root). If the issue does not pin a category and
+   none of the existing ones fits, create a new category folder using the same
+   kebab-case / lowercase / ASCII convention.
+4. The instruction body is at least a few sentences long — empty / placeholder
    skills are not acceptable.
-4. If the issue requests auxiliary files, they exist and are referenced from
+5. If the issue requests auxiliary files, they exist and are referenced from
    `SKILL.md`.
 
 If a check fails, fix it before opening the PR. If you cannot satisfy the issue
@@ -82,5 +89,6 @@ No sub-agent team. Work end-to-end yourself. Most issues are extremely small —
   context only, not for the skill body. The acceptance criteria is the gate for
   the PR.
 - The repo is the source of truth consumed by AgentHub's `/skills` page (live
-  GitHub Contents API) and by `npx degit lucasfe/skills/<name> ~/.claude/skills/<name>`
-  installs in any project.
+  GitHub Contents API) and by
+  `npx degit lucasfe/skills/<category>/<name> ~/.claude/skills/<name>` installs
+  in any project.
