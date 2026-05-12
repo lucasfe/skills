@@ -1,11 +1,11 @@
 ---
 name: spec-to-jira
-description: Turn a PRD and a Type-1 tech spec into a Jira hierarchy — one Epic per milestone, one Story per user story, one Sub-task per stack — with a gap-aware coverage matrix, inferred sub-task dependencies, and idempotent re-runs. Use when user wants to break down a PRD into Jira issues, plan a multi-stack project, or sync a plan with Jira.
+description: Turn a PRD and a stack-organized tech spec into a Jira hierarchy — one Epic per milestone, one Story per user story, one Sub-task per stack — with a gap-aware coverage matrix, inferred sub-task dependencies, and idempotent re-runs. Use when user wants to break down a PRD into Jira issues, plan a multi-stack project, or sync a plan with Jira.
 ---
 
 # Spec to Jira
 
-Take a PRD and a Type-1 tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — detect milestone boundaries in the PRD, derive a list of user stories **per milestone**, perform an inverted scan of the tech spec to build a **gap-aware** coverage matrix (user story × stack) **per milestone**, infer blocking dependencies between Sub-tasks from the tech spec prose, write a `plano-<slug>.md` plan file in the current working directory structured as `## Epic N — <name>` sections, and **pause** for the user to review and edit it. When the user types `ok`, the skill re-reads `plano-<slug>.md` from disk and treats it as the source of truth: it creates one Epic per milestone, one Story per user story under the right Epic, one Sub-task per covered (story × stack) cell, an extra `pm`-stack Sub-task for every gap the user accepted in the **Pendências PM** checklist, and Jira `blocks` / `blocked by` links between Sub-tasks for every dependency the user approved in the **Dependências** checklist — exactly as the file now describes them.
+Take a PRD and a stack-organized tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — detect milestone boundaries in the PRD, derive a list of user stories **per milestone**, perform an inverted scan of the tech spec to build a **gap-aware** coverage matrix (user story × stack) **per milestone**, infer blocking dependencies between Sub-tasks from the tech spec prose, write a `plano-<slug>.md` plan file in the current working directory structured as `## Epic N — <name>` sections, and **pause** for the user to review and edit it. When the user types `ok`, the skill re-reads `plano-<slug>.md` from disk and treats it as the source of truth: it creates one Epic per milestone, one Story per user story under the right Epic, one Sub-task per covered (story × stack) cell, an extra `pm`-stack Sub-task for every gap the user accepted in the **Pendências PM** checklist, and Jira `blocks` / `blocked by` links between Sub-tasks for every dependency the user approved in the **Dependências** checklist — exactly as the file now describes them.
 
 Key behaviors:
 
@@ -199,9 +199,9 @@ Stories that appear in a "shared", "cross-cutting", or otherwise milestone-agnos
 
 Also capture, per milestone, any **dependencies** declared in the PRD — e.g. "Milestone 2 depends on Milestone 1", "blocked by the auth rollout in Phase 1", "requires X to ship first". Record them as a list of milestone numbers / names that the current milestone depends on. If a stated dependency points at a milestone not present in the PRD, keep it as a free-text note; do not invent dependencies. The user can edit the dependency list during review. The skill does **not** create the corresponding Jira "blocks" links between Epics — the per-Epic dependency list is informational and persisted in the plan file and in each Epic's Jira description (Epic-level Jira links are reserved for a future version).
 
-#### 4. Identify the tech spec's stack sections (Type-1 organization)
+#### 4. Identify the tech spec's stack sections
 
-The tech spec is assumed to be **Type-1 organized**: top-level sections grouped per stack, each section describing the implementation work needed for that stack across the whole product. Map headings in the tech spec to the stacks defined in `team.yaml`:
+The tech spec is assumed to be **stack-organized**: top-level sections grouped per stack, each section describing the implementation work needed for that stack across the whole product. Map headings in the tech spec to the stacks defined in `team.yaml`:
 
 - **cloud**: backend, services, APIs, jobs, infra, deployment, observability that lives server-side.
 - **web**: client-side application, UI, components, routing, client state, browser concerns.
@@ -687,7 +687,7 @@ If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, m
 - **Removing existing Jira links** when the user unchecks or deletes a previously-applied Dependências line. The existing link stays in Jira; step 8a surfaces it as a `Link orphan` so the user can remove it manually.
 - **Re-parenting Stories or Sub-tasks across Epics** when the file already has real keys. The first run honors the file's structure; once a Story or Sub-task is in Jira, moving its line to a different Epic in the file does not move the Jira issue. Phase 2 surfaces the divergence in the summary but does not act on it.
 - **Time-travel / undo**. The `Histórico de execuções` log is informational only — there is no way to "replay" a previous run's state from the log. Use Jira's own history for that.
-- Tech specs organized per user story (Type-2). Only Type-1 (per stack) is supported.
+- Tech specs organized per user story. Only tech specs organized per stack are supported.
 - **Creating Jira `blocks` links between Epics**. The per-Epic `Depends on:` list is persisted in the plan file and copied into each Epic's Jira description for visibility, and the link type names are persisted in `.spec-to-jira.yaml` and used for Sub-task ↔ Sub-task links, but the skill does **not** create any Jira link between Epics. A future version will turn the Epic-level `Depends on:` into real links.
 - **Cross-Epic Sub-task ↔ Sub-task links**. The Dependências subsection only operates within a single Epic; a tech spec match that crosses milestones is recorded as a free-text note (prefixed `(cross-epic, not auto-created)`) on the later Epic and not turned into a Jira link. A future version will support cross-Epic Sub-task links.
 - Auto-refresh of the PRD or tech spec content. Once the source documents are captured in Phase 1 step 2, the skill operates on that snapshot. If the source document changes later, the user must re-run the skill to pick up the change. Idempotent re-runs on the same `plano-<slug>.md` do **not** re-fetch the PRD or tech spec.
