@@ -1,28 +1,41 @@
 ---
 name: spec-to-jira
-description: Take a PRD and a Type-1 tech spec — each supplied as a local `.md` path, a Google Docs URL, a Jira issue key, or pasted content — detect milestone boundaries in the PRD, derive user stories per milestone, perform an inverted scan across stack sections, mark uncovered cells as gaps (`❓`), infer cross-stack and cross-story blocking dependencies from tech spec prose, write a `plano-<slug>.md` plan file in the cwd structured as `## Epic N — <name>` sections (each with stories, matrix, sub-tasks, Pendências PM, and Dependências), and pause for human review. When the user resolves the gaps and approves the dependencies and types `ok`, the skill re-reads the `.md` from disk as the source of truth and creates one Epic per milestone, one Story per user story under the right Epic, one Sub-task per covered (story × stack) cell, one extra `pm`-stack Sub-task for every gap the user accepted, and Jira `blocks` / `blocked by` links between Sub-tasks for every dependency the user approved — all via the Atlassian MCP. Multi-stack work for a single story is always split into N Sub-tasks (one per covered stack) linked by dependencies — never a single multi-stack Sub-task. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml` and includes the `pm` virtual stack with `label: stack:pm` and `title_prefix: "[pm]"`; per-cwd Jira target lives in `./.spec-to-jira.yaml` (auto-detected via MCP on first run, including the `blocks` link type names). On invocation, if a `plano-*.md` already exists in the cwd, the skill asks whether to continue that plan or create a new one. Records source identifiers, a snapshot timestamp, Epic keys per milestone, Story keys, the coverage matrix, the gap resolution checklist, and the dependency checklist. Invoking with no arguments triggers interactive prompts for both sources. Use when user wants to bootstrap a multi-milestone Jira hierarchy with gap-aware coverage, stack-split sub-tasks, and Jira `blocks` links between sub-tasks from a PRD and a tech spec, with a human checkpoint between planning and Jira creation.
+description: Take a PRD and a Type-1 tech spec — each supplied as a local `.md` path, a Google Docs URL, a Jira issue key, or pasted content — detect milestone boundaries in the PRD, derive user stories per milestone, perform an inverted scan across stack sections, mark uncovered cells as gaps (`❓`), infer cross-stack and cross-story blocking dependencies from tech spec prose, write a `plano-<slug>.md` plan file in the cwd structured as `## Epic N — <name>` sections (each with stories, matrix, sub-tasks, Pendências PM, and Dependências), and pause for human review. When the user resolves the gaps and approves the dependencies and types `ok`, the skill re-reads the `.md` from disk as the source of truth and creates one Epic per milestone, one Story per user story under the right Epic, one Sub-task per covered (story × stack) cell, one extra `pm`-stack Sub-task for every gap the user accepted, and Jira `blocks` / `blocked by` links between Sub-tasks for every dependency the user approved — all via the Atlassian MCP. Multi-stack work for a single story is always split into N Sub-tasks (one per covered stack) linked by dependencies — never a single multi-stack Sub-task. After creation, the skill writes the real Jira keys back into the `.md` next to every Epic, Story, Sub-task, and approved dependency line, so re-runs are idempotent: a line with no key is created, a line with a key whose mutable fields (summary, description, labels, parent / Epic Link, link relations) diverge from Jira triggers exactly one `editJiraIssue` call, a line with a key whose mutable fields match is skipped (zero writes), and a Jira issue whose key was removed from the `.md` is reported as an orphan for manual review — the skill never deletes Jira data and never touches `status` or `assignee` on existing issues. Each run appends a one-line entry to a `## Histórico de execuções` section at the bottom of the `.md` with the run timestamp and counts of created / updated / orphaned items per issue type; the same counts are echoed in chat. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml` and includes the `pm` virtual stack with `label: stack:pm` and `title_prefix: "[pm]"`; per-cwd Jira target lives in `./.spec-to-jira.yaml` (auto-detected via MCP on first run, including the `blocks` link type names). On invocation, if a `plano-*.md` already exists in the cwd, the skill asks whether to continue that plan or create a new one — picking an existing plan with `Status: applied` triggers the idempotent re-sync flow, picking one with `Status: pending review` triggers the first-run flow. Records source identifiers, a snapshot timestamp, Epic keys per milestone, Story keys, Sub-task keys per cell, the coverage matrix, the gap resolution checklist, the dependency checklist, and the append-only run log. Invoking with no arguments triggers interactive prompts for both sources. Use when user wants to bootstrap a multi-milestone Jira hierarchy with gap-aware coverage, stack-split sub-tasks, and Jira `blocks` links between sub-tasks from a PRD and a tech spec, with a human checkpoint between planning and Jira creation and idempotent re-runs that keep the `.md` and Jira in sync.
 ---
 
-# Spec to Jira (slice 5 — gaps + sub-task ↔ sub-task dependencies)
+# Spec to Jira (slice 6 — idempotent re-runs + execution log)
 
 Take a PRD and a Type-1 tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — detect milestone boundaries in the PRD, derive a list of user stories **per milestone**, perform an inverted scan of the tech spec to build a **gap-aware** coverage matrix (user story × stack) **per milestone**, infer blocking dependencies between Sub-tasks from the tech spec prose, write a `plano-<slug>.md` plan file in the current working directory structured as `## Epic N — <name>` sections, and **pause** for the user to review and edit it. When the user types `ok`, the skill re-reads `plano-<slug>.md` from disk and treats it as the source of truth: it creates one Epic per milestone, one Story per user story under the right Epic, one Sub-task per covered (story × stack) cell, an extra `pm`-stack Sub-task for every gap the user accepted in the **Pendências PM** checklist, and Jira `blocks` / `blocked by` links between Sub-tasks for every dependency the user approved in the **Dependências** checklist — exactly as the file now describes them.
 
-This slice extends slice 4 along three axes:
+Slice 5 added three axes on top of slice 4 — all of them remain in this slice:
 
 1. **Gaps** (`❓`): a coverage matrix cell that has no tech spec mention is now marked `❓` (instead of being silently blank). Each `❓` cell shows up as a checkbox under a per-Epic **Pendências PM** subsection. During the review pause, the user resolves each `❓` either as a **real gap** (checks the box → Phase 2 creates a `pm`-stack Sub-task to track the missing PM/coordination work) or as **N/A** (deletes the line → Phase 2 blanks the matrix cell). Lines left undecided stay as `❓` and are flagged in the summary.
 2. **Multi-stack work splits into linked Sub-tasks**: a story covered in multiple stacks always produces one Sub-task **per covered stack**, never a single multi-stack Sub-task. The skill emits proposed `blocks` links between those Sub-tasks (cloud → web → data → pm by default order from `team.yaml`) as checkboxes under the per-Epic **Dependências** subsection.
 3. **Inferred sub-task ↔ sub-task dependencies**: the skill scans the tech spec for blocking phrases ("after X", "depends on X", "requires Y exists", "once X is in place", "blocked by", "before Y", "must precede", and similar) and proposes additional sub-task ↔ sub-task dependencies as checkboxes in the same **Dependências** subsection. The user approves, edits, adds, or deletes proposals before approval. On `ok`, every checked dependency becomes a Jira `blocks` / `blocked by` link between the corresponding Sub-tasks.
 
-Sub-task ↔ sub-task links **are** in scope and ARE created in Jira via the Atlassian MCP. Idempotent re-runs and creation of Jira "blocks" links between **Epics** remain out of scope — the per-Epic `Depends on:` line is still informational.
+Slice 6 extends slice 5 with two more axes:
+
+4. **Idempotent re-runs**: Phase 2 writes the real Jira keys back into `plano-<slug>.md` next to every Epic heading, every Story line, every Sub-task line, and every approved Dependências line it creates. On any subsequent invocation, the skill re-reads the file (still the source of truth) and decides per item:
+   - **No key** → create the item in Jira (the slice 5 first-run path).
+   - **Key, mutable fields match Jira** → skip (zero Jira writes).
+   - **Key, mutable fields diverge from Jira** → call `editJiraIssue` (or the equivalent link-update path for dependencies) exactly once to bring Jira back in sync with the file. Mutable fields are: summary / title, description, labels, parent / Epic Link, and link relations.
+   - **Key exists in Jira but the line was removed from the `.md`** → list as an **orphan** at the end of the run for manual review. The skill never deletes Jira data automatically.
+   The skill never sets, updates, or clears `status` or `assignee` on any existing Jira issue, ever. Re-running on an unchanged `.md` therefore produces zero Jira writes (true idempotency); re-running after editing a single title produces exactly one update; re-running after deleting a line surfaces one orphan and creates / updates nothing else.
+5. **Histórico de execuções**: every run appends a single timestamped entry to a `## Histórico de execuções` section at the bottom of the `.md`. The entry carries the run kind (`first-run` or `re-run`) and the counts of **created / updated / orphaned** items, grouped by issue type (Epic, Story, Sub-task, Link). The exact same counts are echoed in the chat summary printed at the end of the run, so the chat output and the file's log always match.
+
+Sub-task ↔ sub-task links **are** in scope and ARE created (and idempotently re-synced) in Jira via the Atlassian MCP. Creation of Jira "blocks" links between **Epics** and cross-Epic Sub-task ↔ Sub-task links remain out of scope — the per-Epic `Depends on:` line is still informational.
 
 ## Invocation
 
 On every invocation, **before reading any source input**, the skill scans the current working directory for files matching `plano-*.md`. The presence of such a file is the signal that a prior run paused for review.
 
 - **No matches**: proceed directly to Phase 1 (input resolution → matrix → gap detection → dependency inference → write plan).
-- **One or more matches**: list them in chat (filename and last-modified time) and ask the user:
+- **One or more matches**: list them in chat (filename, `Status:` value, and last-modified time) and ask the user:
   > Found <N> existing plan file(s): <list>. Continue with one of these, or create a new plan?
-  - If the user picks one of the existing files, **skip Phase 1** and jump straight to Phase 2 with that file as the input. Do not re-read the PRD or tech spec — the plan file is now the source of truth. Do not re-prompt for sources.
+  - If the user picks one of the existing files, **skip Phase 1** and jump straight to Phase 2 with that file as the input. Do not re-read the PRD or tech spec — the plan file is now the source of truth. Do not re-prompt for sources. Phase 2 inspects the file's `Status:` value and branches:
+    - `Status: pending review` → the **first-run flow**. Phase 2 creates Jira issues for every line that does not yet carry a real key, writes the real keys back into the file, flips `Status:` to `applied`, and appends an entry to `## Histórico de execuções` with `kind: first-run` plus the created counts (slice 6 wraps the slice 5 path with the log entry).
+    - `Status: applied` → the **idempotent re-sync flow** introduced by slice 6. Phase 2 reads each line, classifies it as **skip / update / create / orphan**, performs only the necessary Jira writes (zero writes when nothing diverged), keeps `Status:` at `applied`, and appends an entry to `## Histórico de execuções` with `kind: re-run` plus the created / updated / orphaned counts. There is no second confirmation prompt for re-syncing an `applied` plan — the operation is by design safe to repeat.
+    - There is no separate `pending re-run` status — Phase 2 itself decides per item what to do based on key presence and per-field divergence with Jira.
   - If the user picks "new" (or "create new", or similar), proceed with Phase 1. Do not delete or rename the existing plan files — leave them in place; Phase 1 picks a non-colliding slug (see Phase 1, step 6).
   - If the user's response is ambiguous, ask again. Do not auto-resume without explicit confirmation, even when only one plan file is present.
 
@@ -157,7 +170,7 @@ Do not ask the user to confirm the format — the detection is unambiguous, and 
 
 ## Process
 
-The skill runs in two phases separated by a human review pause. Phase 1 builds the plan file; the pause lets the user edit it and resolve gaps and dependencies; Phase 2 creates the Jira issues and links from whatever the file now contains. If the user picked an existing `plano-*.md` at the invocation check, **skip directly to Phase 2** with that file. Otherwise, run Phase 1 first.
+The skill runs in two phases separated by a human review pause. Phase 1 builds the plan file; the pause lets the user edit it and resolve gaps and dependencies; Phase 2 creates **or idempotently re-syncs** the Jira issues and links from whatever the file now contains, then appends a one-line entry to `## Histórico de execuções` recording what happened. If the user picked an existing `plano-*.md` at the invocation check, **skip directly to Phase 2** with that file. Otherwise, run Phase 1 first.
 
 ### Phase 1 — build the plan file
 
@@ -370,7 +383,9 @@ Notes on the file format:
 - **Moving a story between Epics**: the user cuts the story line from one Epic's `### Stories` and pastes it into another Epic's `### Stories`. They also move the corresponding row in `### Matriz de cobertura`, **all** matching lines in `### Sub-tasks`, **all** matching lines in `### Pendências PM`, and **any** lines in `### Dependências` that reference that story (including dependency lines whose other side is no longer in the same Epic — those become orphaned). Phase 2 will then create the story under the destination Epic. If the user moves the story but forgets to move its sub-tasks / pendências / dependências, those lines become orphaned (their `(story #N)` reference does not resolve in the same Epic) — Phase 2 will warn and skip them rather than reassign them silently across Epics.
 - **Renaming an Epic**: edit the text after ` — ` on the `## Epic N — <name>` line. Do not change the `N` — Epic numbers are positional. If the user renumbers Epics by hand, Phase 2 still treats them in the order they appear in the file.
 - **Deleting an Epic**: delete the entire `## Epic N — <name>` heading and its `Depends on`, `### Stories`, `### Matriz de cobertura`, `### Sub-tasks`, `### Pendências PM`, and `### Dependências` subsections. Phase 2 will not create that Epic, its Stories, its Sub-tasks, its gap Sub-tasks, or any of its links.
-- **Adding a new Epic**: append a new `## Epic N — <name>` section at the end of the file with the next integer in sequence. Use `[TBD]` for the keys on every line inside. Include a `Depends on:` line (use `(none)` if there are no dependencies) and the six subsections (`### Stories`, `### Matriz de cobertura`, `### Sub-tasks`, `### Pendências PM`, `### Dependências`).
+- **Adding a new Epic**: append a new `## Epic N — <name>` section at the end of the file with the next integer in sequence. Use `[TBD]` for the keys on every line inside. Include a `Depends on:` line (use `(none)` if there are no dependencies) and the six subsections (`### Stories`, `### Matriz de cobertura`, `### Sub-tasks`, `### Pendências PM`, `### Dependências`). If the file already has `## Orphans` and `## Histórico de execuções` sections at the bottom, place the new Epic **before** them — those two sections always remain at the very end of the file.
+- **`## Orphans`** (managed by Phase 2, regenerated each run): added by step 12 when step 8a discovers Jira issues whose keys are no longer in the file. The block is regenerated fresh on every run: orphans the user has already closed / deleted in Jira disappear automatically on the next run. The user may delete the entire `## Orphans` block manually — step 8a will re-create it if there are still orphans to report. Do **not** edit lines inside the block by hand; the format is parser-friendly and is overwritten on each run.
+- **`## Histórico de execuções`** (managed by Phase 2, append-only): created by step 12 the first time Phase 2 completes, and grown by one line on every subsequent run. Each line is parser-friendly: `- <timestamp> — <kind>: created E.../S.../T.../L...; updated E.../S.../T...; orphans S.../T.../L...; failures N`. The user may edit the section heading text or annotate individual lines (e.g., adding `# notes about this run` after a line), but should not delete prior lines — the log is the audit trail for the plan's evolution.
 
 #### 7. Pause for review
 
@@ -390,7 +405,20 @@ The skill is now idle. The user edits `plano-<slug>.md` outside of chat (in thei
 
 If the user cancels, leave `plano-<slug>.md` on disk untouched (still `Status: pending review`). A future `/spec-to-jira` invocation will detect it via the invocation check and offer to continue it.
 
-### Phase 2 — create Jira issues and links from the plan file
+### Phase 2 — create or idempotently re-sync Jira issues and links from the plan file
+
+Phase 2 has one entry point but two behaviors, decided per item on read:
+
+- **Create** — the line has no real Jira key (placeholder `[TBD]` or no bracketed key at all). Phase 2 calls `createJiraIssue` (or `createIssueLink` for dependencies) and writes the returned key back into the file. This is the slice 5 first-run path.
+- **Update** — the line carries a real Jira key, and the line's mutable fields (summary, description, labels, parent / Epic Link, link relations) **diverge** from the current Jira state. Phase 2 calls `editJiraIssue` exactly once to bring Jira back in sync with the file. Dependency lines instead toggle the underlying Jira link (create it if missing, leave it alone if already present — there is no "update" of a link, only presence/absence).
+- **Skip** — the line carries a real Jira key, and the line's mutable fields **match** Jira. Phase 2 performs zero Jira writes for that item.
+- **Orphan** — a Jira issue that is reachable from a parent recorded in the file (an Epic's Story descendants, a Story's Sub-task descendants) carries a key that does **not** appear anywhere in the file. Phase 2 records the orphan in the run summary, in `## Histórico de execuções`, and as an `Orphans:` block in the rewritten file. It does **not** delete or transition the Jira issue.
+
+Mutable fields and the `status` / `assignee` rule:
+
+- Only **summary, description, labels, parent / Epic Link, and the presence of link relations** are ever written by Phase 2 on existing Jira issues. Components are written on create but not changed on update (slice 6 does not re-attach / re-detach components on re-runs).
+- **`status` and `assignee` are never touched on existing issues**, under any circumstance — not on create (Jira's default applies), not on update, not on orphan handling. If a teammate changed the assignee or moved a Story to "In Progress" in Jira between runs, the next re-run leaves both fields alone.
+- The skill does not three-way-merge: if a teammate edited a Story title directly in Jira and the `.md` was untouched, the next re-run will overwrite Jira back to whatever the `.md` says. The `.md` is the source of truth.
 
 #### 8. Re-read the plan file from disk
 
@@ -400,7 +428,8 @@ Parse:
 
 - **PRD title** — the H1 line at the top of the file.
 - **Metadata header** — `Source PRD:`, `Source tech spec:`, `Snapshot:`, `Generated:`, `Jira project:`. The `Jira project` value must match `project_key` in `./.spec-to-jira.yaml`; if it does not, stop and tell the user the file targets a different project than the cwd is configured for.
-- **Status** — should read `pending review`. If it reads `applied`, the plan has already been pushed to Jira on a prior run; warn the user that re-running will create duplicate issues and ask for an explicit re-confirmation before proceeding.
+- **Status** — `pending review` selects the **first-run flow** (slice 5 behavior, now with a `Histórico de execuções` entry appended at the end). `applied` selects the **idempotent re-sync flow** (slice 6 behavior described in this Phase 2 intro and in the per-step "update path" subsections below). No re-confirmation prompt is needed for `applied` — the operation is safe to repeat. Any other value (typo, partial edit) is malformed and stops the run with a clear error.
+- **Histórico de execuções** — read every existing `- <timestamp> — <kind>: …` line in the `## Histórico de execuções` section at the bottom of the file, if the section exists. Keep them verbatim — step 12 appends one new line at the end of the section; it never rewrites or removes older entries. If the section does not exist, step 12 creates it. The log is informational only; nothing in steps 9–11b parses it for decision-making.
 - **Epics** — every `## Epic N — <name>` heading, in the order they appear in the file. For each Epic, parse:
   - The Epic's **name** — the text after ` — ` on the heading line.
   - The Epic's **Jira key** — for a fresh plan the heading has no key; for a partially-completed prior run the heading reads `## Epic N — <name> [<KEY>]`. Record the key when present, treat its absence as "needs creation".
@@ -417,55 +446,78 @@ If a line was edited (story title rewritten, sub-task title rewritten, gap line 
 
 If the file is malformed (missing H1, broken metadata header, zero `## Epic N — <name>` sections, or an Epic section that has Sub-task lines but no `### Stories` subsection), stop and tell the user exactly which section is malformed. Do not guess. A missing `### Matriz de cobertura`, `### Pendências PM`, or `### Dependências` is **not** malformed — those subsections are optional and their absence means "no gaps to resolve" / "no dependencies to create". They are regenerated as needed in step 12 from the Stories and Sub-tasks subsections of the same Epic.
 
-#### 9. Create one Epic per milestone
+After parsing, build an in-memory map of **every Jira key referenced by the file** — Epic keys on `## Epic N — <name> [<KEY>]` headings, Story keys on Stories lines, Sub-task keys on Sub-tasks and accepted Pendências PM lines, and link endpoint keys on Dependências lines. This set is the **canonical inventory** for orphan detection in step 8a (only meaningful on `Status: applied` re-runs — on a `pending review` first run the set is typically empty and step 8a is a no-op).
 
-Iterate the `## Epic N — <name>` sections in the order they appear in the file. For each Epic still present (i.e., not deleted by the user), use the Atlassian MCP to create one Epic in the configured project. Call `createJiraIssue` with:
+#### 8a. Discover Jira orphans (re-run only)
 
-- `cloudId`: `cloud_id` from `.spec-to-jira.yaml`.
-- `projectKey`: `project_key` from `.spec-to-jira.yaml`.
-- `issueTypeName`: `issue_types.epic` from `.spec-to-jira.yaml`.
+Only run this step when `Status:` is `applied`. On a first run there is nothing to discover — every line is a create.
 
-For each Epic:
+For each Epic in the file that carries a real Jira key:
 
-- **Summary**: the name on the `## Epic N — <name>` heading — i.e., whatever the user left there during review (renames are honored).
-- **Description**: a short pointer back to `prd_identifier`, a pointer to `tech_spec_identifier`, the snapshot timestamp, a one-paragraph summary derived from the PRD section for that milestone, and the Epic's `Depends on:` list verbatim (so a reviewer can see the declared dependencies even though they are not Jira link issues yet).
+1. Use the Atlassian MCP's `searchJiraIssuesUsingJql` to list every Story whose Epic Link / parent points at this Epic key. Use a JQL like `"Epic Link" = <EPIC_KEY> OR parent = <EPIC_KEY>` (try the first form; if the project does not expose the `Epic Link` field, retry with `parent = <EPIC_KEY>`).
+2. For each returned Story key, check the canonical inventory. If the key is **not** in the inventory, record it as a **Story orphan** — capture the Story's current Jira summary so step 12 can echo it in the `Orphans:` block and step 13 can show it in chat.
+3. For each Story key that **is** in the inventory, call `searchJiraIssuesUsingJql` with `parent = <STORY_KEY>` to list its Sub-tasks. For each Sub-task key not in the inventory, record it as a **Sub-task orphan** with its current Jira summary.
+4. For each existing Jira `blocks` link between two Sub-tasks **both of which** are still in the inventory, but where no Dependências line in the file describes that link (regardless of checkbox state), record it as a **Link orphan**. Only consider links whose endpoints are both in the inventory — links to Sub-tasks that are themselves orphans are reported via the Sub-task orphan, not duplicated as a Link orphan.
 
-If an Epic heading already carries a real Jira key (resumed plan), skip creation and use the existing key as the parent for that Epic's Stories.
+Do **not** call the Atlassian MCP for an Epic whose heading has no real key — that Epic is in "create" mode and has no Jira state to compare against.
 
-Capture the returned Jira key for each Epic (e.g., `PROJ-1234`).
+If the MCP search fails for an Epic (e.g., transient API error), report it in step 13 as `orphan discovery failed for <EPIC_KEY>` and continue with the next Epic — the run still completes; the file's existing items are still skip / update / create as usual.
 
-If Epic creation fails for one milestone, do not abort the whole run — record the failure (it will be surfaced in step 12) and continue with the next Epic. Stories, Sub-tasks, Pendências PM Sub-tasks, and Dependências links belonging to a failed Epic are skipped in steps 10, 11, and 11b.
+#### 9. Create or update one Epic per milestone
 
-#### 10. Create one Story per Stories line, parented to its Epic
+Iterate the `## Epic N — <name>` sections in the order they appear in the file. For each Epic still present (i.e., not deleted by the user), classify on the heading's Jira key:
 
-For each Epic in turn, iterate every line still present in that Epic's `### Stories` subsection and create one Story in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.story` from `.spec-to-jira.yaml`), linked to **that Epic's** key from step 9. Use whichever mechanism the project supports for parenting a Story to an Epic — the `Epic Link` custom field on classic projects, or the `parent` field on next-gen / team-managed projects. If the first attempt fails because the field is not available, retry with the other mechanism before giving up.
+- **No key on the heading** → **create**. Call the Atlassian MCP's `createJiraIssue` with:
+  - `cloudId`: `cloud_id` from `.spec-to-jira.yaml`.
+  - `projectKey`: `project_key` from `.spec-to-jira.yaml`.
+  - `issueTypeName`: `issue_types.epic` from `.spec-to-jira.yaml`.
+  - **Summary**: the name on the `## Epic N — <name>` heading — i.e., whatever the user left there during review (renames are honored).
+  - **Description**: a short pointer back to `prd_identifier`, a pointer to `tech_spec_identifier`, the snapshot timestamp, a one-paragraph summary derived from the PRD section for that milestone, and the Epic's `Depends on:` list verbatim (so a reviewer can see the declared dependencies even though they are not Jira link issues yet).
+  Capture the returned Jira key (e.g., `PROJ-1234`); step 12 writes it onto the heading.
+- **Key on the heading** → fetch the Epic from Jira via `getJiraIssue` and compare:
+  - **Mutable fields (summary, description, labels) all match the file** → **skip**. Record this as `Epic skipped (no divergence)` for the run summary.
+  - **At least one mutable field diverges from the file** → **update**. Call `editJiraIssue` exactly once with only the diverged fields. The Epic's `Depends on:` list is re-rendered into the description block on update, so a teammate that edits `Depends on:` in the file will see the new list show up in Jira. Components are not changed on update. `status` and `assignee` are never sent — even when the user changed nothing else, those fields are excluded from the payload.
+  Use the existing Epic key as the parent for that Epic's Stories.
 
-A user who moved a story between Epics (cut from Epic 1's `### Stories`, paste into Epic 2's `### Stories`) before approval will see the Story created under Epic 2's key here — the file's structure drives parenting, not any memory of the original Phase 1 assignment.
+If Epic creation **or update** fails for one milestone, do not abort the whole run — record the failure (it will be surfaced in step 12 as `❌ <reason>` on the heading and in step 13) and continue with the next Epic. Stories, Sub-tasks, Pendências PM Sub-tasks, and Dependências links belonging to a failed Epic are still attempted in steps 10, 11, and 11b only when the Epic's key is known (created on a prior run, or successfully created this run); if the Epic itself never got a key, skip its descendants entirely for this run.
 
-The Story summary is derived from the **user-edited** story sentence in the file — extract the `<feature>` clause from the `As a <actor>, I want <feature>, so that <benefit>` pattern when present; otherwise use the full edited sentence as the summary. The description is the full story sentence as written in the file plus any extra context the user kept in the file.
+#### 10. Create or update one Story per Stories line, parented to its Epic
 
-If a Stories line already carries a real Jira key (resumed plan), skip creation and remember the existing key for sub-task parenting. The Story's Epic parent is **not** re-validated for resumed lines — once a Story is in Jira, this slice does not move it between Epics. If the user moved a real-key Story line between Epics in the file, the file and Jira are now out of sync; flag it for the summary in step 13 and leave the Jira parenting alone.
+For each Epic in turn, iterate every line still present in that Epic's `### Stories` subsection. Classify on the line's Jira key:
 
-Capture the returned Jira key for each Story and remember which Epic it belongs to (used by step 11 for orphan detection).
+- **No key on the line** → **create**. Call `createJiraIssue` with `issueTypeName` set to `issue_types.story` from `.spec-to-jira.yaml`, linked to **that Epic's** key from step 9. Use whichever mechanism the project supports for parenting a Story to an Epic — the `Epic Link` custom field on classic projects, or the `parent` field on next-gen / team-managed projects. If the first attempt fails because the field is not available, retry with the other mechanism before giving up.
+  - **Summary**: derived from the **user-edited** story sentence in the file — extract the `<feature>` clause from the `As a <actor>, I want <feature>, so that <benefit>` pattern when present; otherwise use the full edited sentence as the summary.
+  - **Description**: the full story sentence as written in the file plus any extra context the user kept in the file.
+  A user who moved a story between Epics (cut from Epic 1's `### Stories`, pasted into Epic 2's `### Stories`) before approval — and whose line had **no** key when they moved it — will see the Story created under Epic 2's key here. The file's structure drives parenting, not any memory of the original Phase 1 assignment.
+- **Key on the line** → fetch the Story from Jira via `getJiraIssue` and compare:
+  - **Mutable fields (summary, description, labels) all match the file** → **skip**. Use the existing key for sub-task parenting.
+  - **At least one mutable field diverges** → **update**. Call `editJiraIssue` exactly once with only the diverged fields. `status` and `assignee` are never sent.
+  - **Real-key Story line moved between Epics** (the Story's Epic Link / parent in Jira does not match the Epic that now contains the line in the file): the skill does **not** re-parent existing Stories across Epics — that is out of scope. Treat the line's mutable fields normally (skip or update them as above), but **also** flag the divergence in the run summary and in `## Histórico de execuções` so the user knows the parenting is out of sync. The user can move the Story in Jira manually.
 
-#### 11. Create Sub-tasks (covered cells + accepted PM gaps), parented to their Story
+Capture the Jira key for each Story (returned by `createJiraIssue` or already on the line) and remember which Epic it belongs to (used by step 11 for parent resolution and orphan detection).
 
-For each Epic in turn, create Sub-tasks in this order: first every line still present in `### Sub-tasks`, then every **checked** line in `### Pendências PM` (the accepted gaps). Use `createJiraIssue` with `issueTypeName` set to `issue_types.sub_task` from `.spec-to-jira.yaml`, parented to the resolved Story key from step 10 (parent resolution is scoped to the **same Epic** — see step 8 for the order).
+#### 11. Create or update Sub-tasks (covered cells + accepted PM gaps), parented to their Story
 
-For a **`### Sub-tasks` line**:
+For each Epic in turn, process Sub-tasks in this order: first every line still present in `### Sub-tasks`, then every **checked** line in `### Pendências PM` (the accepted gaps). Classify each line on its Jira key.
+
+For a **`### Sub-tasks` line**, the **mutable fields** are:
 
 - **Summary**: the text on the sub-task line between the `[<stack>]` tag and the ` — parent ` separator. This is the user-editable title — use whatever the user wrote, do not regenerate it from the Story summary or the stack `title_prefix`.
 - **Labels**: include the matching stack's `label` value from `team.yaml` — e.g. `stack:cloud`. Do not add other labels in this slice.
-- **Component**: if the matching stack has a non-empty `component` field in `team.yaml`, attach it as a Jira component. If the project does not have that component configured, skip the component silently and continue with the Sub-task creation.
 - **Description**: state which Story this Sub-task implements (by Story key), cite the relevant tech spec section as written on the line, and include `tech_spec_identifier` so a reviewer can locate the original tech spec document.
 
-For a **checked `### Pendências PM` line** (an **accepted gap**):
+For a **checked `### Pendências PM` line** (an **accepted gap**), the **mutable fields** are:
 
-- **Stack**: always the virtual `pm` stack. The Sub-task's labels and component come from the `pm` entry in `team.yaml`.
+- **Stack**: always the virtual `pm` stack. The Sub-task's labels come from the `pm` entry in `team.yaml`.
 - **Summary**: `gap: <story summary> — <missing stack> coverage` (e.g., `gap: Onboarding flow — data coverage`). The user may have edited the gap line text (e.g., added "waiting on legal sign-off") — append the user's free-form note to the description, not to the summary, so the summary stays scannable.
 - **Description**: state which Story this gap belongs to (by Story key), state the missing stack column (`<stack>`), include the user's free-form note from the gap line, and include `tech_spec_identifier`. The description should make clear that this is a **PM tracking issue for missing stack coverage**, not a regular implementation Sub-task.
 
-For both kinds of Sub-tasks: if a line already carries a real Jira key (resumed plan), skip creation and remember the existing key.
+Classification per line:
+
+- **No key on the line** → **create**. Use `createJiraIssue` with `issueTypeName` set to `issue_types.sub_task` from `.spec-to-jira.yaml`, parented to the resolved Story key from step 10 (parent resolution is scoped to the **same Epic** — see step 8 for the order). On create, also attach the **Component** if the matching stack has a non-empty `component` field in `team.yaml` (if the project does not have that component configured, skip the component silently and continue with the Sub-task creation). Components are **not** changed on later updates.
+- **Key on the line** → fetch the Sub-task from Jira via `getJiraIssue` and compare:
+  - **Mutable fields (summary, description, labels) all match the file** → **skip**. Use the existing key for dependency resolution in step 11b.
+  - **At least one mutable field diverges** → **update**. Call `editJiraIssue` exactly once with only the diverged fields. The parent reference is **not** re-sent on update — once a Sub-task is in Jira, this slice does not re-parent it. `status` and `assignee` are never sent.
 
 If a Sub-tasks line's parent annotation does not resolve to any Story line in the same Epic (an **orphan** — typically because the user moved the parent story to another Epic but forgot to move the sub-task), warn the user in the chat summary, append ` — ⚠️ orphan parent` to the line during the step 12 rewrite, and skip creation.
 
@@ -473,76 +525,135 @@ If a Pendências PM line's `story #N` reference does not resolve in the same Epi
 
 For Pendências PM lines that are **unchecked** (and not deleted): do not create a Sub-task, leave the `❓` in the matrix during step 12's rewrite, and surface the unresolved gap in the chat summary so the user knows there is still an open decision.
 
-Iterate Sub-tasks in this order: outer loop = Epics in file order; inner loop within each Epic = Sub-tasks lines first, then accepted Pendências PM lines (so that gap-tracking Sub-tasks come after the regular ones in the same Story). Capture the returned Jira key for each Sub-task and remember which Sub-task each `(stack, story #N)` reference resolves to within each Epic — step 11b uses that mapping to create links.
+Iterate Sub-tasks in this order: outer loop = Epics in file order; inner loop within each Epic = Sub-tasks lines first, then accepted Pendências PM lines (so that gap-tracking Sub-tasks come after the regular ones in the same Story). Capture the Jira key for each Sub-task (returned by `createJiraIssue` or already on the line) and remember which Sub-task each `(stack, story #N)` reference resolves to within each Epic — step 11b uses that mapping to verify or create links.
 
-#### 11b. Create Jira `blocks` / `blocked by` links from approved Dependências
+#### 11b. Create or verify Jira `blocks` / `blocked by` links from approved Dependências
 
 Only run this step if `link_types.blocks` and `link_types.blocked_by` are non-empty in `.spec-to-jira.yaml`. If either is empty, skip the step and warn the user in the chat summary that no links were created because the project has no "blocks" link type configured.
+
+Links have no "update" path — a Jira link either exists between two issues with a given relation, or it does not. The idempotent operation for links is therefore **verify-then-create-if-missing**.
 
 For each Epic in turn, iterate every **checked** line in that Epic's `### Dependências` subsection. For each line:
 
 - Resolve the **blocker** Sub-task: the Sub-task referenced by `(<stack_a>, story #M)` on the left of `blocks`, scoped to this Epic. Use the explicit `[<key_a>]` if it carries a real key (resumed plan); otherwise look up the mapping built in step 11.
 - Resolve the **blocked** Sub-task: the Sub-task referenced by `(<stack_b>, story #N)` on the right of `blocks`, scoped to this Epic. Same resolution order.
-- If both sides resolve, call the Atlassian MCP's `createIssueLink` with:
-  - `cloudId`: from `.spec-to-jira.yaml`.
-  - `inwardIssueKey`: the **blocked** Sub-task's key.
-  - `outwardIssueKey`: the **blocker** Sub-task's key.
-  - `linkTypeName`: `link_types.blocks` from `.spec-to-jira.yaml` (the outward direction name; the MCP picks up the inward name `link_types.blocked_by` from the link type definition).
+- If both sides resolve to **real** Jira keys (not placeholders), first verify whether the link already exists in Jira:
+  - Call `getJiraIssue` on the blocker Sub-task and inspect its `issuelinks` array (or call `getJiraIssueRemoteIssueLinks` if the MCP requires a dedicated endpoint).
+  - If an outward `blocks` link to the blocked Sub-task's key is already present → **skip**. Treat as a successful idempotent op for the run summary (counts under "skipped, no divergence").
+  - If no such link is present → **create**. Call the Atlassian MCP's `createIssueLink` with:
+    - `cloudId`: from `.spec-to-jira.yaml`.
+    - `inwardIssueKey`: the **blocked** Sub-task's key.
+    - `outwardIssueKey`: the **blocker** Sub-task's key.
+    - `linkTypeName`: `link_types.blocks` from `.spec-to-jira.yaml` (the outward direction name; the MCP picks up the inward name `link_types.blocked_by` from the link type definition).
+- If at least one side is still a `[TBD]` placeholder (e.g., the user added the line with placeholders just for this re-run) but the placeholder resolves to a Sub-task that was just created in step 11, use the newly created key for that side and proceed as above. Verification can be skipped when at least one side was created this run — by definition the link did not exist a moment ago.
 - If either side does not resolve to a Sub-task within the same Epic, the line is **orphaned**: append ` — ⚠️ orphan reference` to the line during the step 12 rewrite, skip the link, and flag it in the chat summary. Do not auto-fix by reaching across Epics.
-- For unchecked lines (`- [ ]` or any other unrecognized state) and deleted lines: do not create a link. Unchecked lines stay in the file as suggestions the user did not approve; deleted lines are simply gone.
-- For lines added by the user during review with `[TBD]` placeholders: resolve them the same way (by `(stack, story #N)` reference within the Epic). The placeholders are replaced with real keys in step 12.
+- For unchecked lines (`- [ ]` or any other unrecognized state) and deleted lines: do not create a link. **Importantly, this slice does NOT remove an existing Jira link when the user unchecks or deletes a previously-applied Dependências line.** That is in the same family as deletion and is out of scope — the existing link stays in Jira, and step 8a's orphan-detection sweep will list it as a **Link orphan** so the user can remove it manually.
 
-Capture which links succeeded and which failed; both lists feed into step 12's rewrite and step 13's summary.
+Capture which links were verified-as-present, which were created, and which failed; all three lists feed into step 12's rewrite and step 13's summary.
 
-If the same dependency appears twice (duplicate line, or two lines that resolve to the same blocker/blocked pair), create the link only once; flag the duplicate in the summary so the user knows one was skipped.
+If the same dependency appears twice (duplicate line, or two lines that resolve to the same blocker/blocked pair), perform the verify-or-create only once; flag the duplicate in the summary so the user knows one was skipped.
 
 Iterate links in file order — outer loop = Epics; inner loop = Dependências lines within each Epic.
 
-#### 12. Update the plan file with the real Jira keys
+#### 12. Update the plan file with the run's outcome
 
-Rewrite `plano-<slug>.md` in place to reflect the created Jira issues and links. Specifically:
+Rewrite `plano-<slug>.md` in place to reflect what just happened. The rewrite is the same shape for first-run and re-run — the only difference is which marks need to be set / refreshed and what the appended log entry says.
 
-- On each `## Epic N — <name>` heading whose Epic was created, append ` [<EPIC_KEY>]` so the heading reads `## Epic N — <name> [<EPIC_KEY>]`. If an Epic failed to create, leave its heading untouched and append ` — ❌ <reason>` to the heading line; skip the per-Epic Story / Sub-task / link replacements for that Epic and leave their `[TBD]` placeholders in place.
-- Replace each `[TBD]` placeholder on Story and Sub-task lines with the real Jira key.
-- Replace each `[TBD]` placeholder on Dependências lines (both the blocker and the blocked side) with the real Sub-task keys created in step 11.
-- For each Epic, rewrite its matrix:
-  - The first column (`| [TBD] <feature> |` becomes `| <STORY_KEY> <feature> |`).
-  - Cells for **covered Sub-tasks** that were successfully created stay as `✅ <citation>`.
-  - Cells for **`❓` gaps** that the user **checked** in Pendências PM are rewritten to `✅ pm sub-task <PM_KEY>` (using the `pm` Sub-task key created in step 11), making the matrix self-explanatory: the gap was acknowledged and is now tracked.
-  - Cells for **`❓` gaps** that the user **deleted** from Pendências PM (resolved as N/A) are blanked — leave the cell empty between the pipes.
-  - Cells for **`❓` gaps** that the user left unresolved (line still present and unchecked) stay as `❓`.
-  - Cells for sub-tasks that **failed to create** become `❌ <reason>` instead of `✅ <citation>` (or `✅ pm sub-task ...`).
-- Rewrite `parent [TBD]` references in each Epic's Sub-tasks subsection so they point at the created Story keys within the same Epic.
+**Key replacements (first-run path mostly; harmless on re-runs since the keys are already there):**
+
+- On each `## Epic N — <name>` heading whose Epic was just **created**, append ` [<EPIC_KEY>]` so the heading reads `## Epic N — <name> [<EPIC_KEY>]`. On re-runs the heading already carries `[<EPIC_KEY>]`; leave it untouched. If an Epic creation / update failed this run, leave its heading otherwise intact and append ` — ❌ <reason>` to the heading line; skip the per-Epic Story / Sub-task / link replacements for that Epic and leave their `[TBD]` placeholders (if any) in place. On a re-run, an Epic that was updated does **not** receive any extra marker — a clean update is invisible in the file (only the `Histórico de execuções` entry records it).
+- Replace each `[TBD]` placeholder on Story and Sub-task lines with the real Jira key returned this run. Lines that already carry a real key are left as-is for **skip** outcomes and updated only in the rewrite block below for **update** outcomes.
+- Replace each `[TBD]` placeholder on Dependências lines (both the blocker and the blocked side) with the real Sub-task keys created in step 11. Lines that already carry real keys on both sides stay as-is.
+
+**Per-Epic matrix rewrite:**
+
+For each Epic, rewrite its matrix:
+
+- The first column (`| [TBD] <feature> |` becomes `| <STORY_KEY> <feature> |`).
+- Cells for **covered Sub-tasks** that were successfully created **or skipped / updated as idempotent re-runs** stay as `✅ <citation>`.
+- Cells for **`❓` gaps** that the user **checked** in Pendências PM are rewritten to `✅ pm sub-task <PM_KEY>` (using the `pm` Sub-task key created in step 11), making the matrix self-explanatory: the gap was acknowledged and is now tracked.
+- Cells for **`❓` gaps** that the user **deleted** from Pendências PM (resolved as N/A) are blanked — leave the cell empty between the pipes.
+- Cells for **`❓` gaps** that the user left unresolved (line still present and unchecked) stay as `❓`.
+- Cells for sub-tasks that **failed to create** become `❌ <reason>` instead of `✅ <citation>` (or `✅ pm sub-task ...`). Cells for sub-tasks that **failed to update** stay as `✅ <citation>` but the Sub-task line gets `❌ <reason>` appended (see below).
+
+**Sub-tasks, Pendências PM, Dependências per Epic:**
+
+- Rewrite `parent [TBD]` references in each Epic's Sub-tasks subsection so they point at the created Story keys within the same Epic. Already-resolved parents stay as-is.
+- For each Sub-task line: if it was **updated** this run, append ` — ✏️ updated` (informational, removed on the next rewrite if not re-updated). If it **failed to update or create**, append ` — ❌ <reason>` and leave any placeholder in place. **Skip** outcomes get no marker.
 - For the Pendências PM subsection of each Epic:
-  - Lines whose checkbox was checked and whose `pm` Sub-task was created: replace `[ ]` with `[x]` if not already, and append ` → [<PM_KEY>] ✅` to the line so the user can see the created Sub-task key.
-  - Lines whose checkbox was checked but the `pm` Sub-task failed to create: append ` → ❌ <reason>` to the line.
+  - Lines whose checkbox was checked and whose `pm` Sub-task was created this run: replace `[ ]` with `[x]` if not already, and append ` → [<PM_KEY>] ✅` to the line so the user can see the created Sub-task key.
+  - Lines whose checkbox was checked and whose `pm` Sub-task was updated this run: append ` — ✏️ updated`.
+  - Lines whose checkbox was checked but the `pm` Sub-task failed to create or update: append ` → ❌ <reason>`.
   - Lines that were left unchecked (unresolved): leave the line as-is.
   - Lines the user deleted: do not regenerate them.
 - For the Dependências subsection of each Epic:
-  - Lines whose checkbox was checked and whose link was created: keep the `[x]` and append ` → ✅` to the line. If the MCP returned a link ID, append ` ✅ link <link_id>` instead.
-  - Lines whose checkbox was checked but the link failed to create: append ` → ❌ <reason>` to the line.
+  - Lines whose checkbox was checked and whose link was created this run: keep the `[x]` and append ` → ✅` to the line. If the MCP returned a link ID, append ` ✅ link <link_id>` instead.
+  - Lines whose checkbox was checked and whose link was **verified-as-already-present** during a re-run: keep the `[x]` and append ` → ✅` (or leave any prior `→ ✅` mark intact). The state is the same as "link exists in Jira", so no distinct marker is needed.
+  - Lines whose checkbox was checked but the link failed to create / verify: append ` → ❌ <reason>`.
   - Lines that were left unchecked: leave them as-is.
   - Lines the user deleted: do not regenerate them.
   - Orphaned lines (one or both sides did not resolve in the same Epic): append ` — ⚠️ orphan reference`.
-- Change the top-level `Status:` header from `pending review` to `applied`.
+
+**Status and Orphans block:**
+
+- Change the top-level `Status:` header from `pending review` to `applied` on a first run. On a re-run, `Status:` is already `applied`; leave it.
+- If step 8a discovered any orphans (Stories, Sub-tasks, or Links that exist in Jira but are absent from the file), append (or refresh, if already present) a `## Orphans` section directly above `## Histórico de execuções`. Format:
+  ```
+  ## Orphans
+
+  - Story orphan: PROJ-201 "Old story title" — line removed from this file on a prior run; close or move in Jira manually
+  - Sub-task orphan: PROJ-305 "[cloud] Old subtask" — parent Story PROJ-202 still present in file
+  - Link orphan: PROJ-310 blocks PROJ-311 — neither endpoint has a matching Dependências line; remove in Jira manually
+  ```
+  Regenerate the section fresh each run from step 8a's findings — orphans the user has already cleaned up in Jira disappear from the section on the next run automatically. If no orphans were discovered, omit the `## Orphans` section entirely (and remove it if a prior run left it behind).
 - If the project has no "blocks" link type (link types empty in `.spec-to-jira.yaml`), append ` — ⚠️ skipped: no blocks link type` to every checked Dependências line instead of creating links, and surface the global warning in step 13.
 
-Do not change anything else in the file — preserve every user edit to titles, citations, dependencies, gap rationales, Epic order, and story order.
+**Append a `## Histórico de execuções` entry:**
+
+After all of the above, append exactly one line at the end of the `## Histórico de execuções` section at the bottom of the file. Create the section if it does not exist. Format:
+
+```
+- <timestamp> — <kind>: created E<created_epics>/S<created_stories>/T<created_subtasks>/L<created_links>; updated E<updated_epics>/S<updated_stories>/T<updated_subtasks>; orphans S<orphan_stories>/T<orphan_subtasks>/L<orphan_links>; failures <total_failures>
+```
+
+Where:
+- `<timestamp>` is an ISO 8601 UTC timestamp captured at the start of step 12 (e.g., `2026-05-11T15:42:03Z`).
+- `<kind>` is `first-run` when this run flipped `Status:` from `pending review` to `applied`, otherwise `re-run`.
+- The counts are exact integers — zero when the count is zero. Do not omit the zero counts; the parser-friendly format makes the log diffable across runs.
+- Sub-task counts are summed across both `### Sub-tasks` lines and accepted `### Pendências PM` lines (i.e., everything that became a Jira Sub-task).
+- Link counts cover Dependências links only.
+
+Example entries for the three demoable scenarios from the acceptance criteria:
+
+```
+- 2026-05-11T14:00:00Z — first-run: created E2/S5/T12/L4; updated E0/S0/T0; orphans S0/T0/L0; failures 0
+- 2026-05-12T09:30:00Z — re-run: created E0/S0/T0/L0; updated E0/S0/T0; orphans S0/T0/L0; failures 0  # unchanged .md → zero writes
+- 2026-05-13T16:15:00Z — re-run: created E0/S0/T0/L0; updated E0/S1/T0; orphans S0/T0/L0; failures 0  # one Story title edited → exactly one update
+- 2026-05-14T11:45:00Z — re-run: created E0/S0/T0/L0; updated E0/S0/T0; orphans S0/T1/L0; failures 0  # one Sub-task line deleted → orphan reported, nothing deleted
+```
+
+Do not rewrite or remove any prior entry — the section is append-only. The user can manually edit history if they want, but the skill never touches existing lines.
+
+Do not change anything else in the file — preserve every user edit to titles, citations, dependencies, gap rationales, Epic order, and story order. Specifically, on a re-run the file should be byte-identical to its pre-run state except for: any `❌` / `✏️ updated` markers added by this run, any prior such markers refreshed or removed when the underlying state changed, the `## Orphans` block, and the new `## Histórico de execuções` line.
 
 #### 13. Summarize in chat
 
-Print a concise summary, grouped per Epic. For each Epic: its key + name, the count of created stories under it, the count of created sub-tasks under it (broken down per stack — including how many came from accepted gaps in Pendências PM), the count of created Sub-task ↔ Sub-task links from Dependências, the list of created story keys, and the list of created sub-task keys. After the per-Epic breakdown, include the total counts across all Epics and the path to the updated `plano-<slug>.md`. Include a direct link to each Epic in Jira if the MCP response includes one or if `cloud_url` is set in `.spec-to-jira.yaml`.
+Print a concise summary, grouped per Epic. For each Epic: its key + name, and per-issue-type counts split as **created / updated / skipped** under it (Stories, Sub-tasks, Links). For first-runs the updated / skipped counts will be zero on every Epic; for re-runs they carry the real signal of what changed. Include the keys of any items that were **created** or **updated** this run (not the ones that were skipped — they would drown the summary on stable re-runs). After the per-Epic breakdown, include the total counts across all Epics and the path to the updated `plano-<slug>.md`. Include a direct link to each Epic in Jira if the MCP response includes one or if `cloud_url` is set in `.spec-to-jira.yaml`.
+
+The chat summary **must end with the same single line that step 12 just appended to `## Histórico de execuções`**, prefixed with `Log:`. This is the acceptance criterion's "chat summary matches the `.md` log" — the user can paste either into a ticket and they will carry identical counts.
 
 Flag explicitly in the summary:
 
-- Any **Epic that failed to create** (and the resulting skipped Stories / Sub-tasks / links under it).
-- Any **orphaned sub-task** (parent annotation does not resolve within the same Epic).
-- Any **orphaned dependency** (blocker or blocked side does not resolve within the same Epic).
+- Any **Epic that failed to create or update** (and the resulting skipped Stories / Sub-tasks / links under it).
+- Any **orphaned sub-task line** in the file (parent annotation does not resolve within the same Epic).
+- Any **orphaned dependency line** (blocker or blocked side does not resolve within the same Epic).
+- Any **Jira orphan** discovered in step 8a — list the orphan key plus its current Jira summary so the user can act on it manually. Group as `Story orphans:`, `Sub-task orphans:`, `Link orphans:`. The skill never deletes; the user decides whether to close / delete in Jira.
 - Any **unresolved gap** in Pendências PM (line still present and unchecked, no decision recorded).
-- Any **accepted gap** that produced a `pm` Sub-task — list the Sub-task keys explicitly so the user can find them in Jira.
+- Any **accepted gap** that produced a `pm` Sub-task **this run** — list the Sub-task keys explicitly so the user can find them in Jira. (Accepted gaps that were created on a prior run and skipped this run do not need to be re-listed.)
 - Any **rejected dependency** the skill had pre-checked but the user unchecked or deleted (informational, so the user remembers their own decision).
 - Any **skipped link creation** because `.spec-to-jira.yaml` has no `blocks` link type configured.
 - Any **real-key Story line the user moved between Epics** — note that Jira and file are now out of sync because this slice does not re-parent existing Stories.
+- Any **orphan-discovery failure** from step 8a (transient MCP search error for one Epic) — the user can re-run later to pick those up.
 
 If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, mention it explicitly so the user knows to review and commit the file.
 
@@ -557,10 +668,12 @@ If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, m
 - If the auto-detected project has no "blocks" link type, write `.spec-to-jira.yaml` with both `link_types` fields empty and continue — Phase 2 will skip link creation and warn the user in the summary, but everything else still works.
 - If the user **deletes** `plano-<slug>.md` during the pause, Phase 2 cannot proceed — the plan is gone. When the user types `ok`, tell them the file is missing and stop. The user can re-invoke the skill to start over.
 - If the plan file is **malformed** when Phase 2 re-reads it (missing H1, broken metadata header, empty Stories section, mismatched `Jira project` value), stop and tell the user exactly which section is malformed. Do not guess. A missing `### Pendências PM` or `### Dependências` is not malformed — those subsections are optional.
-- If the plan file reads `Status: applied`, the plan was already pushed to Jira on a prior run. Warn the user that re-running will create duplicate issues and require an explicit re-confirmation before proceeding. The skill does not deduplicate.
-- If Epic creation fails for one milestone, do not abort the run — leave the Epic heading untouched, append ` — ❌ <reason>` to it, skip Story / Sub-task / link creation for that Epic, and continue with the next Epic. This slice never deletes already-created Epics to "match" the file state.
-- If Story creation fails partway through, do not roll back created issues (this slice never deletes). Continue to Sub-task creation for whatever Stories did succeed within the same Epic. Update `plano-<slug>.md` with whatever was created so the user can see the partial state, and clearly mark which user stories failed (append ` — ❌ <reason>` to the failed line and leave its `[TBD]` placeholder in place) so the user can fix and re-run.
-- If Sub-task creation fails for a particular line, log it inline (append ` — ❌ <reason>` to the line, leave the `[TBD]` placeholder in place, and write `❌ <reason>` in the corresponding matrix cell instead of `✅ <citation>` or `✅ pm sub-task ...`) and move on. Do not abort the whole run for a single Sub-task failure.
+- If the plan file reads `Status: applied`, re-running is an **idempotent re-sync**, not a duplicate-creating push. Phase 2 classifies each line as skip / update / create / orphan and only writes what is necessary; an unchanged file produces zero Jira writes. No re-confirmation prompt is needed. See "Phase 2 — create or idempotently re-sync …" and step 8a for the full flow. If `Status:` reads anything other than `pending review` or `applied` (typo, partial edit), stop and tell the user the file is malformed.
+- If Epic creation **or update** fails for one milestone, do not abort the run — leave the Epic heading otherwise intact, append ` — ❌ <reason>` to it, skip Story / Sub-task / link creation for that Epic, and continue with the next Epic. This slice never deletes already-created Epics to "match" the file state.
+- If Story creation **or update** fails partway through, do not roll back created issues (this slice never deletes). Continue to Sub-task processing for whatever Stories did succeed within the same Epic. Update `plano-<slug>.md` with whatever was created / updated so the user can see the partial state, and clearly mark which user stories failed (append ` — ❌ <reason>` to the failed line; leave any `[TBD]` placeholder in place when the failure was a create, or leave the existing key in place when the failure was an update) so the user can fix and re-run.
+- If Sub-task creation **or update** fails for a particular line, log it inline (append ` — ❌ <reason>` to the line; for create failures leave the `[TBD]` placeholder in place and write `❌ <reason>` in the corresponding matrix cell instead of `✅ <citation>` or `✅ pm sub-task ...`; for update failures keep the existing key and the existing matrix cell content) and move on. Do not abort the whole run for a single Sub-task failure.
+- If a `getJiraIssue` divergence check fails for an existing key (e.g., the issue was deleted in Jira between runs, or the MCP returned a transient error), treat the line as **failed**: append ` — ❌ <reason>` to the line, do not attempt the update, do not re-create, and surface the failure in step 13. The user can re-run after fixing the underlying issue. Do not silently skip — silent skips would mask a real Jira deletion.
+- If step 8a's orphan-discovery JQL search fails for a particular Epic, report `orphan discovery failed for <EPIC_KEY>` in step 13 and continue. The current run's create / update / skip behavior is unaffected — only the orphan column is unreliable for that Epic.
 - If a sub-task is **orphaned** (its parent annotation does not resolve to any Story in the same Epic), append ` — ⚠️ orphan parent` to the line, leave the `[TBD]` placeholder in place, skip creation, and surface the orphan in the chat summary. Do not auto-fix by reassigning across Epics.
 - If a Pendências PM line's `story #N` reference does not resolve in the same Epic, also flag as orphan, append ` — ⚠️ orphan parent`, skip creation, and surface in the summary.
 - If a Pendências PM line is left unchecked (the user did not decide), do not create a Sub-task, leave the `❓` in the matrix on the rewrite, and flag it in the summary as an unresolved gap so the user knows there is a pending decision.
@@ -571,11 +684,14 @@ If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, m
 
 ## Out of scope for this slice
 
-- Full idempotent re-runs — re-running on an `applied` plan will warn the user but otherwise create duplicate Jira issues and links if the user confirms. The only resume case this slice handles natively is a paused plan where some lines / Epic headings already carry real keys (e.g., one Epic was created on a prior turn but its Stories were not) — Phase 2 detects real keys per heading and per line and skips creation for those items, but still creates everything else.
+- **Deleting Jira issues** when the corresponding line is removed from the `.md`. Orphaned Jira issues (key exists in Jira, line removed from file) are reported at the end of the run in the `## Orphans` block and the chat summary; the user closes, deletes, or re-links them in Jira directly. The skill never deletes Jira data automatically.
+- **Touching `status` or `assignee`** on any existing Jira issue. These fields are managed by the team in Jira, not by the skill. Only the fields explicitly listed as "mutable" in Phase 2 (summary, description, labels, parent / Epic Link on create, and link relations) are ever written by the skill on existing issues. Components are written on create only.
+- **Three-way merging** of edits that originated outside the skill. If a teammate edits a Story title directly in Jira and the `.md` was untouched between runs, the next idempotent re-run will overwrite Jira back to whatever the `.md` says (the `.md` is the source of truth). The skill does not detect or warn about external Jira edits, beyond surfacing them implicitly through the per-field divergence check.
+- **Removing existing Jira links** when the user unchecks or deletes a previously-applied Dependências line. The existing link stays in Jira; step 8a surfaces it as a `Link orphan` so the user can remove it manually.
+- **Re-parenting Stories or Sub-tasks across Epics** when the file already has real keys. The first run honors the file's structure; once a Story or Sub-task is in Jira, moving its line to a different Epic in the file does not move the Jira issue. Phase 2 surfaces the divergence in the summary but does not act on it.
+- **Time-travel / undo**. The `Histórico de execuções` log is informational only — there is no way to "replay" a previous run's state from the log. Use Jira's own history for that.
 - Tech specs organized per user story (Type-2). Only Type-1 (per stack) is supported in this slice.
 - **Creating Jira `blocks` links between Epics**. The per-Epic `Depends on:` list is persisted in the plan file and copied into each Epic's Jira description for visibility, and the link type names are persisted in `.spec-to-jira.yaml` and used for Sub-task ↔ Sub-task links, but this slice does **not** create any Jira link between Epics. A future slice will turn the Epic-level `Depends on:` into real links.
 - **Cross-Epic Sub-task ↔ Sub-task links**. The Dependências subsection only operates within a single Epic; a tech spec match that crosses milestones is recorded as a free-text note (prefixed `(cross-epic, not auto-created)`) on the later Epic and not turned into a Jira link. A future slice will support cross-Epic Sub-task links.
-- Re-parenting Stories or Sub-tasks across Epics when the file already has real keys. The first run honors the file's structure; once a Story is in Jira, moving its line to a different Epic in the file does not move the Jira issue. Phase 2 surfaces this divergence in the summary but does not act on it.
-- Auto-refresh: once the PRD or tech spec content is captured in Phase 1 step 2, the skill operates on that snapshot. If the source document changes later, the user must re-run the skill to pick up the change.
-- Live syncing between the plan file and Jira after Phase 2 completes — edits to the plan file after `Status:` flips to `applied` do not propagate back to Jira. The user would need a fresh run.
-- Removing existing Jira links when the user unchecks a previously-applied Dependências line on a `Status: applied` plan and re-confirms re-running. This slice never deletes Jira data.
+- Auto-refresh of the PRD or tech spec content. Once the source documents are captured in Phase 1 step 2, the skill operates on that snapshot. If the source document changes later, the user must re-run the skill to pick up the change. Idempotent re-runs on the same `plano-<slug>.md` do **not** re-fetch the PRD or tech spec.
+- Live syncing between the plan file and Jira after Phase 2 completes — edits to the plan file only propagate to Jira on the **next** `/spec-to-jira` invocation that picks up this plan. There is no daemon or watcher.
