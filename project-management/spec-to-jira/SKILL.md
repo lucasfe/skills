@@ -1,18 +1,21 @@
 ---
 name: spec-to-jira
-description: Read a local PRD `.md` plus a Type-1 tech spec `.md`, derive user stories, perform an inverted scan across stack sections, and create one Epic + one Story per user story + one Sub-task per covered (story × stack) cell in Jira via the Atlassian MCP. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml`; per-cwd Jira target (cloud, project, issue types, link types) lives in `./.spec-to-jira.yaml` and is auto-detected via MCP on first run. Records the Epic key, Story keys, and a "Matriz de cobertura" table in a `plano-<slug>.md` file. Use when user wants to bootstrap a Jira hierarchy with stack-split sub-tasks from a PRD and a tech spec.
+description: Take a PRD and a Type-1 tech spec — each supplied as a local `.md` path, a Google Docs URL, a Jira issue key, or pasted content — derive user stories, perform an inverted scan across stack sections, and create one Epic + one Story per user story + one Sub-task per covered (story × stack) cell in Jira via the Atlassian MCP. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml`; per-cwd Jira target lives in `./.spec-to-jira.yaml` (auto-detected via MCP on first run). Records source identifiers, a snapshot timestamp, the Epic key, Story keys, and a "Matriz de cobertura" table in a `plano-<slug>.md` file. Invoking with no arguments triggers interactive prompts for both sources. Use when user wants to bootstrap a Jira hierarchy with stack-split sub-tasks from a PRD and a tech spec.
 ---
 
-# Spec to Jira (slice 7 — config files + MCP auto-detect)
+# Spec to Jira (slice 8 — multi-format input)
 
-Take a local PRD Markdown file and a local Type-1 tech spec Markdown file, derive a list of user stories from the PRD, perform an inverted scan of the tech spec to build a coverage matrix (user story × stack), and create the corresponding Epic + Stories + Sub-tasks in Jira via the Atlassian MCP. Stack definitions and the Jira target are read from YAML configuration files — no values are hardcoded in the skill anymore. Record the created keys and the coverage matrix in a `plano-<slug>.md` file in the current working directory.
+Take a PRD and a Type-1 tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — derive a list of user stories from the PRD, perform an inverted scan of the tech spec to build a coverage matrix (user story × stack), and create the corresponding Epic + Stories + Sub-tasks in Jira via the Atlassian MCP. Stack definitions and the Jira target are read from YAML configuration files. Record the source identifiers, a snapshot timestamp, the created keys, and the coverage matrix in a `plano-<slug>.md` file in the current working directory.
 
-This slice extends slice 2 by externalizing all previously hardcoded values (stack labels, title prefixes, project key, issue type names) into two YAML files: a **global** `~/.config/spec-to-jira/team.yaml` (stack vocabulary) and a **per-cwd** `./.spec-to-jira.yaml` (Jira target). The per-cwd file is auto-detected via the Atlassian MCP on first run and persisted, so subsequent runs in the same cwd skip detection silently. Review-pause workflow, multi-milestone handling, Google Docs input, Jira-key input, and idempotent re-runs remain out of scope.
+This slice extends slice 7 by accepting input in formats beyond local `.md`: Google Docs URLs (fetched via the Google Drive MCP, with a paste-or-path fallback when the MCP is unavailable), Jira issue keys (fetched via the Atlassian MCP), pasted-in-chat content, and a no-argument interactive mode that prompts for both sources. PRD and tech spec sources are independent — they can be mixed (e.g., PRD as a Drive URL, tech spec as a Jira key). The resolved source identifiers are written into the metadata header of `plano-<slug>.md` so the artifact is traceable back to the originals. Review-pause workflow, multi-milestone handling, and idempotent re-runs remain out of scope.
 
 ## Inputs
 
-- **PRD path** (required): a local `.md` file passed as the **first** argument: `/spec-to-jira <path-to-prd.md> <path-to-tech-spec.md>`. If no first argument is provided, ask the user for the PRD path once and proceed.
-- **Tech spec path** (required): a local `.md` file passed as the **second** argument. If no second argument is provided, ask the user for the tech spec path once and proceed. If only one path is given and it is ambiguous, ask the user to clarify which file is the PRD and which is the tech spec.
+The skill accepts the PRD and the tech spec independently — each can be supplied in any of the supported formats, and the two formats do not need to match.
+
+- **PRD source** (required): the **first** positional argument: `/spec-to-jira <prd-source> <tech-spec-source>`. May be a local `.md` path, a Google Docs URL (any `https://docs.google.com/document/...` link), or a Jira issue key (e.g., `PROJ-123`). If the argument is omitted, the skill enters interactive mode for the PRD (see "Input resolution" below).
+- **Tech spec source** (required): the **second** positional argument. Same supported formats as the PRD. If omitted, the skill enters interactive mode for the tech spec. If only one argument is given and its role is ambiguous, ask the user to clarify which is the PRD and which is the tech spec.
+- **No-argument interactive mode**: invoking `/spec-to-jira` with **no arguments** enters interactive mode for both sources. For each source, ask the user to either paste content, give a local `.md` path, give a Google Docs URL, or give a Jira issue key. PRD comes first, tech spec second.
 - **Jira target**: read from `./.spec-to-jira.yaml` in the current working directory. If the file is missing, run the auto-detect flow (see "Configuration" below) and write it. Once present, the skill never asks the user for the project key, cloud ID, or issue type names again in this cwd.
 
 ## Configuration
@@ -89,6 +92,51 @@ When `./.spec-to-jira.yaml` is missing, the skill runs the following sequence **
 
 If the Atlassian MCP is not configured or authentication fails at any point during auto-detect, stop and tell the user how to authenticate. Do **not** write a partial `.spec-to-jira.yaml`.
 
+## Input resolution
+
+The same resolution algorithm runs for the PRD source and again for the tech spec source. Each source produces a `(content, identifier)` pair: `content` is the raw Markdown the rest of the skill operates on; `identifier` is the string written into the `plano-<slug>.md` metadata header (a path, URL, Jira key, or `pasted (<short hash>)`).
+
+### Format detection
+
+Classify the source string before fetching:
+
+- **Google Docs URL**: matches `https?://docs.google.com/document/`. Anything after that (including `/d/<doc-id>/edit`, query strings, and fragments) is part of the identifier — preserve it verbatim.
+- **Jira issue key**: matches the regex `^[A-Z][A-Z0-9_]+-\d+$`. Case-sensitive — Jira keys are uppercase.
+- **Local `.md` path**: ends in `.md` and points at an existing file on disk. Resolve relative paths against the current working directory.
+- **Interactive sentinel**: the user supplied no argument for this source. Trigger the interactive prompt described below.
+
+If the string matches none of the above (e.g., a URL on a different host, a bare slug, a non-`.md` file), stop and tell the user which formats are supported. Do not silently guess.
+
+### Fetching by format
+
+- **Google Docs URL** → call the Google Drive MCP to fetch the document content as Markdown (or as plain text if Markdown export is not available; the skill will still parse it as Markdown). The `content` is the fetched body; the `identifier` is the original URL. If the Google Drive MCP is **not configured**, returns an **authentication error**, returns an **access error** (the user is not allowed to read this doc), or returns an **empty body**, fall back to the paste-or-path prompt described below.
+- **Jira issue key** → call the Atlassian MCP's `getJiraIssue` against the cloud ID from `.spec-to-jira.yaml`. Use the issue's **description** (rendered as Markdown — convert Atlassian Document Format if needed) as the `content`; the `identifier` is the issue key. If the Atlassian MCP is not configured or the issue is not found, stop and tell the user — do **not** fall back to paste-or-path for Jira keys, because the same MCP is needed later to create the Epic and there is no point pretending it works.
+- **Local `.md` path** → Read the file with the Read tool. The `content` is the file body; the `identifier` is the path the user provided (preserve relative vs. absolute as given). If the path does not exist or is not a `.md` file, stop and tell the user.
+- **Pasted content** (only reachable via the paste-or-path fallback or interactive mode) → take whatever the user pastes into chat as the `content`. The `identifier` is the literal string `pasted (<short hash>)`, where `<short hash>` is the first 8 hex characters of the SHA-256 of the pasted content, so two pastes of the same body produce the same identifier in the plan file.
+
+### Paste-or-path fallback (Google Docs only)
+
+When the Google Drive MCP cannot deliver the document, prompt the user with exactly this choice — paraphrase the wording but keep both options visible:
+
+> The Google Drive MCP is unavailable / unauthorized / returned no content. Paste the document content here, or give me an `.md` path on disk.
+
+Accept either response:
+
+- If the user pastes content, take it as-is as the `content`; record the identifier as `pasted (<short hash>) [originally <google-docs-url>]` so the plan file still traces back to the original URL the user tried.
+- If the user gives an `.md` path, re-run the local-path branch above. Identifier becomes the path, but again append `[originally <google-docs-url>]` so traceability is preserved.
+
+Never fall back to paste-or-path for any format other than Google Docs URLs. Local-path errors and Jira-key errors must stop the run with a clear message.
+
+### Interactive mode (no-argument invocation, or argument-less per-source prompt)
+
+If the user invoked `/spec-to-jira` with no arguments, ask sequentially — PRD first, then tech spec. For each, prompt:
+
+> Provide the **PRD** (or **tech spec**) as: (a) a local `.md` path, (b) a Google Docs URL, (c) a Jira issue key, or (d) pasted content. Reply with one of those.
+
+Run the resolution algorithm above on the response. If the user chooses "pasted content", capture whatever they paste next and treat it as the `content`, with the identifier `pasted (<short hash>)` (no `[originally ...]` suffix, since there is no original URL to record).
+
+Do not ask the user to confirm the format — the detection is unambiguous, and the user already chose by typing.
+
 ## Process
 
 ### 1. Load configuration
@@ -98,9 +146,10 @@ If the Atlassian MCP is not configured or authentication fails at any point duri
 
 ### 2. Resolve the PRD and the tech spec
 
-- Read the PRD `.md` file with the Read tool. If the path does not exist or is not a `.md` file, stop and tell the user.
-- Read the tech spec `.md` file with the Read tool. If the path does not exist or is not a `.md` file, stop and tell the user.
-- Pick a slug for the plan filename from the PRD's first H1 title (lowercased, kebab-case, ASCII-only). If there is no H1, derive the slug from the PRD's filename.
+- Run the "Input resolution" algorithm above on the PRD source argument (or the interactive prompt response when no argument was given). The result is `(prd_content, prd_identifier)`.
+- Run the same algorithm on the tech spec source argument. The result is `(tech_spec_content, tech_spec_identifier)`.
+- Capture a snapshot timestamp at this point as an ISO 8601 string (e.g., `2026-05-11T14:23:07Z`). This is the value that goes into the plan file's metadata header so a reader can tell when the source documents were captured.
+- Pick a slug for the plan filename from the PRD's first H1 title (lowercased, kebab-case, ASCII-only). If there is no H1, derive the slug from `prd_identifier`: take the basename for a path, the document ID segment for a Google Docs URL, the lowercased issue key for a Jira key, or `pasted` for pasted content. Still kebab-case and ASCII-only.
 
 ### 3. Derive user stories from the PRD
 
@@ -149,7 +198,7 @@ Use the Atlassian MCP to create exactly one Epic in the configured project. Call
 - `projectKey`: `project_key` from `.spec-to-jira.yaml`.
 - `issueTypeName`: `issue_types.epic` from `.spec-to-jira.yaml`.
 
-The Epic's summary is the PRD title; the description is a short pointer back to the source PRD path, a pointer to the tech spec path, and a one-paragraph summary derived from the PRD.
+The Epic's summary is the PRD title; the description is a short pointer back to `prd_identifier`, a pointer to `tech_spec_identifier`, the snapshot timestamp, and a one-paragraph summary derived from the PRD.
 
 Capture the returned Jira key (e.g., `PROJ-1234`).
 
@@ -168,7 +217,7 @@ For each non-empty cell in the coverage matrix, create one Sub-task in the same 
 - **Summary**: `<title_prefix> <Story summary>` — e.g. `[cloud] Allow user to reset password`. The prefix comes from the matching stack's `title_prefix` field in `team.yaml`.
 - **Labels**: include the matching stack's `label` value from `team.yaml` — e.g. `stack:cloud`. Do not add other labels in this slice.
 - **Component**: if the matching stack has a non-empty `component` field in `team.yaml`, attach it as a Jira component. If the project does not have that component configured, skip the component silently and continue with the Sub-task creation.
-- **Description**: state which Story this Sub-task implements (by Story key) and cite the relevant tech spec section(s) for this (story, stack) cell. Use the heading text plus an anchor or section number so a reviewer can navigate back to the source. Also include the source tech spec path.
+- **Description**: state which Story this Sub-task implements (by Story key) and cite the relevant tech spec section(s) for this (story, stack) cell. Use the heading text plus an anchor or section number so a reviewer can navigate back to the source. Also include `tech_spec_identifier` so a reviewer can locate the original tech spec document regardless of format.
 
 Iterate stacks in the order they appear in `team.yaml` and stories in the order they appear in the matrix, so the resulting Sub-tasks are created in a predictable sequence.
 
@@ -176,14 +225,15 @@ Capture the returned Jira key for each Sub-task. Do not create Sub-tasks for emp
 
 ### 10. Write `plano-<slug>.md`
 
-In the current working directory, write a file named `plano-<slug>.md` with the following structure:
+In the current working directory, write a file named `plano-<slug>.md` with the following structure. The lines under the title are the **metadata header** — it lists the source identifiers (in whatever format the user supplied), the snapshot timestamp captured in step 2, and the Jira project so the artifact is fully traceable back to its inputs.
 
 ```
 # <PRD title>
 
-Source PRD: <path-to-prd.md>
-Source tech spec: <path-to-tech-spec.md>
-Generated: <ISO 8601 timestamp>
+Source PRD: <prd_identifier>
+Source tech spec: <tech_spec_identifier>
+Snapshot: <ISO 8601 timestamp captured in step 2>
+Generated: <ISO 8601 timestamp at write time>
 Jira project: <project_key>
 
 ## Epic
@@ -228,7 +278,10 @@ If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, m
 
 ## Failure handling
 
-- If the Atlassian MCP is not configured or authentication fails — at auto-detect time, at Epic creation, or anywhere else — stop and tell the user how to authenticate. Do not write a partial `.spec-to-jira.yaml` or a partial `plano-<slug>.md`.
+- If the Atlassian MCP is not configured or authentication fails — at auto-detect time, at Jira-key fetch time, at Epic creation, or anywhere else — stop and tell the user how to authenticate. Do not write a partial `.spec-to-jira.yaml` or a partial `plano-<slug>.md`.
+- If a **Jira issue key** input refers to a missing or inaccessible issue, stop and tell the user the issue key was not found. Do **not** fall back to paste-or-path — the Atlassian MCP is needed later anyway, so masking its failure here only delays the same error.
+- If a **Google Docs URL** input cannot be fetched (Drive MCP missing, auth failure, access denied, empty body), trigger the paste-or-path fallback described in "Input resolution". Do not abort.
+- If a **local `.md` path** input does not exist or is not a `.md` file, stop and tell the user. Do not auto-fall-back — the user typed a path, not a URL, so paste-or-path would be surprising here.
 - If `team.yaml` is missing, write the default file and continue. Never abort the run because of a missing `team.yaml` — the default is always usable.
 - If the auto-detected project has no Sub-task issue type (or the equivalent), stop and tell the user before writing `.spec-to-jira.yaml`. This skill requires the three-level hierarchy.
 - If Story creation fails partway through, do not roll back created issues (this slice never deletes). Continue to Sub-task creation for whatever Stories did succeed. Write `plano-<slug>.md` with whatever was created so the user can see the partial state, and clearly mark which user stories failed so the user can re-run manually.
@@ -238,8 +291,7 @@ If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, m
 
 - Review-pause workflow (editing the `.md` and approving with `ok`).
 - Multi-milestone handling — this slice always creates exactly one Epic.
-- Google Docs URLs as input.
-- Jira issue keys as input.
-- Idempotent re-runs — re-running on the same PRD + tech spec will create duplicate Jira issues. The user is responsible for not doing that yet.
+- Idempotent re-runs — re-running on the same PRD + tech spec will create duplicate Jira issues. The user is responsible for not doing that yet. (The snapshot timestamp in the metadata header makes duplicate runs easier to spot manually, but the skill does not yet deduplicate.)
 - Tech specs organized per user story (Type-2). Only Type-1 (per stack) is supported in this slice.
 - Creating "blocks" / "is blocked by" links between issues. The link type names are persisted in `.spec-to-jira.yaml` so future slices can use them, but this slice does not create any link.
+- Auto-refresh: once the PRD or tech spec content is captured in step 2, the skill operates on that snapshot. If the source document changes later, the user must re-run the skill to pick up the change.
