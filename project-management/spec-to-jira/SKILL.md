@@ -1,21 +1,32 @@
 ---
 name: spec-to-jira
-description: Take a PRD and a Type-1 tech spec — each supplied as a local `.md` path, a Google Docs URL, a Jira issue key, or pasted content — derive user stories, perform an inverted scan across stack sections, and create one Epic + one Story per user story + one Sub-task per covered (story × stack) cell in Jira via the Atlassian MCP. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml`; per-cwd Jira target lives in `./.spec-to-jira.yaml` (auto-detected via MCP on first run). Records source identifiers, a snapshot timestamp, the Epic key, Story keys, and a "Matriz de cobertura" table in a `plano-<slug>.md` file. Invoking with no arguments triggers interactive prompts for both sources. Use when user wants to bootstrap a Jira hierarchy with stack-split sub-tasks from a PRD and a tech spec.
+description: Take a PRD and a Type-1 tech spec — each supplied as a local `.md` path, a Google Docs URL, a Jira issue key, or pasted content — derive user stories, perform an inverted scan across stack sections, write a `plano-<slug>.md` plan file in the cwd, and pause for human review. When the user edits the file and types `ok`, the skill re-reads the `.md` from disk as the source of truth and creates one Epic + one Story per user story + one Sub-task per covered (story × stack) cell in Jira via the Atlassian MCP. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml`; per-cwd Jira target lives in `./.spec-to-jira.yaml` (auto-detected via MCP on first run). On invocation, if a `plano-*.md` already exists in the cwd, the skill asks whether to continue that plan or create a new one. Records source identifiers, a snapshot timestamp, the Epic key, Story keys, and a "Matriz de cobertura" table. Invoking with no arguments triggers interactive prompts for both sources. Use when user wants to bootstrap a Jira hierarchy with stack-split sub-tasks from a PRD and a tech spec, with a human checkpoint between planning and Jira creation.
 ---
 
-# Spec to Jira (slice 8 — multi-format input)
+# Spec to Jira (slice 3 — review pause, .md as source of truth)
 
-Take a PRD and a Type-1 tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — derive a list of user stories from the PRD, perform an inverted scan of the tech spec to build a coverage matrix (user story × stack), and create the corresponding Epic + Stories + Sub-tasks in Jira via the Atlassian MCP. Stack definitions and the Jira target are read from YAML configuration files. Record the source identifiers, a snapshot timestamp, the created keys, and the coverage matrix in a `plano-<slug>.md` file in the current working directory.
+Take a PRD and a Type-1 tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — derive a list of user stories from the PRD, perform an inverted scan of the tech spec to build a coverage matrix (user story × stack), write a `plano-<slug>.md` plan file in the current working directory, and **pause** for the user to review and edit it. When the user types `ok`, the skill re-reads `plano-<slug>.md` from disk and treats it as the source of truth: it creates the Epic, Stories, and Sub-tasks in Jira via the Atlassian MCP exactly as the file now describes them, including any edits the user made during the pause.
 
-This slice extends slice 7 by accepting input in formats beyond local `.md`: Google Docs URLs (fetched via the Google Drive MCP, with a paste-or-path fallback when the MCP is unavailable), Jira issue keys (fetched via the Atlassian MCP), pasted-in-chat content, and a no-argument interactive mode that prompts for both sources. PRD and tech spec sources are independent — they can be mixed (e.g., PRD as a Drive URL, tech spec as a Jira key). The resolved source identifiers are written into the metadata header of `plano-<slug>.md` so the artifact is traceable back to the originals. Review-pause workflow, multi-milestone handling, and idempotent re-runs remain out of scope.
+This slice extends slice 8 by splitting the previously single-pass flow into two phases with a human checkpoint in between, and by detecting pre-existing `plano-*.md` files in the cwd so a paused run can be resumed (or so the user can choose to start fresh). Edits the user makes to the plan file — renamed story titles, renamed sub-task titles, deleted lines — propagate to the Jira issues that get created. Multi-milestone handling and idempotent re-runs remain out of scope.
+
+## Invocation
+
+On every invocation, **before reading any source input**, the skill scans the current working directory for files matching `plano-*.md`. The presence of such a file is the signal that a prior run paused for review.
+
+- **No matches**: proceed directly to Phase 1 (input resolution → matrix → write plan).
+- **One or more matches**: list them in chat (filename and last-modified time) and ask the user:
+  > Found <N> existing plan file(s): <list>. Continue with one of these, or create a new plan?
+  - If the user picks one of the existing files, **skip Phase 1** and jump straight to Phase 2 with that file as the input. Do not re-read the PRD or tech spec — the plan file is now the source of truth. Do not re-prompt for sources.
+  - If the user picks "new" (or "create new", or similar), proceed with Phase 1. Do not delete or rename the existing plan files — leave them in place; Phase 1 picks a non-colliding slug (see Phase 1, step 6).
+  - If the user's response is ambiguous, ask again. Do not auto-resume without explicit confirmation, even when only one plan file is present.
 
 ## Inputs
 
-The skill accepts the PRD and the tech spec independently — each can be supplied in any of the supported formats, and the two formats do not need to match.
+The skill accepts the PRD and the tech spec independently — each can be supplied in any of the supported formats, and the two formats do not need to match. Inputs are consumed in Phase 1 only; Phase 2 reads the plan file alone and never re-touches the original PRD or tech spec.
 
-- **PRD source** (required): the **first** positional argument: `/spec-to-jira <prd-source> <tech-spec-source>`. May be a local `.md` path, a Google Docs URL (any `https://docs.google.com/document/...` link), or a Jira issue key (e.g., `PROJ-123`). If the argument is omitted, the skill enters interactive mode for the PRD (see "Input resolution" below).
-- **Tech spec source** (required): the **second** positional argument. Same supported formats as the PRD. If omitted, the skill enters interactive mode for the tech spec. If only one argument is given and its role is ambiguous, ask the user to clarify which is the PRD and which is the tech spec.
-- **No-argument interactive mode**: invoking `/spec-to-jira` with **no arguments** enters interactive mode for both sources. For each source, ask the user to either paste content, give a local `.md` path, give a Google Docs URL, or give a Jira issue key. PRD comes first, tech spec second.
+- **PRD source** (required in Phase 1): the **first** positional argument: `/spec-to-jira <prd-source> <tech-spec-source>`. May be a local `.md` path, a Google Docs URL (any `https://docs.google.com/document/...` link), or a Jira issue key (e.g., `PROJ-123`). If the argument is omitted, the skill enters interactive mode for the PRD (see "Input resolution" below).
+- **Tech spec source** (required in Phase 1): the **second** positional argument. Same supported formats as the PRD. If omitted, the skill enters interactive mode for the tech spec. If only one argument is given and its role is ambiguous, ask the user to clarify which is the PRD and which is the tech spec.
+- **No-argument interactive mode**: invoking `/spec-to-jira` with **no arguments** (and the user has chosen "new" at the invocation check above, or no plan file existed) enters interactive mode for both sources. For each source, ask the user to either paste content, give a local `.md` path, give a Google Docs URL, or give a Jira issue key. PRD comes first, tech spec second.
 - **Jira target**: read from `./.spec-to-jira.yaml` in the current working directory. If the file is missing, run the auto-detect flow (see "Configuration" below) and write it. Once present, the skill never asks the user for the project key, cloud ID, or issue type names again in this cwd.
 
 ## Configuration
@@ -139,23 +150,27 @@ Do not ask the user to confirm the format — the detection is unambiguous, and 
 
 ## Process
 
-### 1. Load configuration
+The skill runs in two phases separated by a human review pause. Phase 1 builds the plan file; the pause lets the user edit it; Phase 2 creates the Jira issues from whatever the file now contains. If the user picked an existing `plano-*.md` at the invocation check, **skip directly to Phase 2** with that file. Otherwise, run Phase 1 first.
+
+### Phase 1 — build the plan file
+
+#### 1. Load configuration
 
 - Read `~/.config/spec-to-jira/team.yaml`. If missing, write the default file (cloud / web / data / pm) and continue with that default. Echo the path to the user so they know where to edit it.
 - Read `./.spec-to-jira.yaml`. If missing, run the auto-detect flow (see above) and write the file. If present, read it silently — do not prompt the user for any value it already carries.
 
-### 2. Resolve the PRD and the tech spec
+#### 2. Resolve the PRD and the tech spec
 
 - Run the "Input resolution" algorithm above on the PRD source argument (or the interactive prompt response when no argument was given). The result is `(prd_content, prd_identifier)`.
 - Run the same algorithm on the tech spec source argument. The result is `(tech_spec_content, tech_spec_identifier)`.
 - Capture a snapshot timestamp at this point as an ISO 8601 string (e.g., `2026-05-11T14:23:07Z`). This is the value that goes into the plan file's metadata header so a reader can tell when the source documents were captured.
 - Pick a slug for the plan filename from the PRD's first H1 title (lowercased, kebab-case, ASCII-only). If there is no H1, derive the slug from `prd_identifier`: take the basename for a path, the document ID segment for a Google Docs URL, the lowercased issue key for a Jira key, or `pasted` for pasted content. Still kebab-case and ASCII-only.
 
-### 3. Derive user stories from the PRD
+#### 3. Derive user stories from the PRD
 
 Read the PRD and derive a list of well-defined user stories. Prefer stories that are already written in `As a <actor>, I want <feature>, so that <benefit>` form; if the PRD lacks them, synthesize the list from the problem statement, solution, and acceptance criteria sections. Each story must be a single, independently-meaningful unit of user value — do not stitch multiple goals into one story, and do not split a single goal across multiple stories.
 
-### 4. Identify the tech spec's stack sections (Type-1 organization)
+#### 4. Identify the tech spec's stack sections (Type-1 organization)
 
 The tech spec is assumed to be **Type-1 organized**: top-level sections grouped per stack, each section describing the implementation work needed for that stack across the whole product. Map headings in the tech spec to the stacks defined in `team.yaml`:
 
@@ -169,7 +184,7 @@ Capture, per stack, the list of headings (with their heading text and an anchor 
 
 If none of the configured stacks are represented in the tech spec at all (e.g., the tech spec is empty or unrelated), stop and tell the user — there is nothing to scan.
 
-### 5. Inverted scan → coverage matrix
+#### 5. Inverted scan → coverage matrix
 
 For each derived user story, scan **all configured stack sections** of the tech spec and identify the specific tech spec section(s) that describe implementation work needed to deliver that story. The scan is **inverted**: the user story drives the lookup, and the tech spec is the lookup target.
 
@@ -180,52 +195,13 @@ The output is a coverage matrix with one row per user story and one column per s
 
 A story can be covered in zero, one, several, or all stacks. Do not invent coverage to fill cells — empty cells are valid and informative.
 
-### 6. Confirm before writing to Jira
+#### 6. Write `plano-<slug>.md` with placeholder keys
 
-Print:
+In the current working directory, write a file named `plano-<slug>.md`. The file format is identical to the final artifact produced in Phase 2 (see the template below), with one difference: every Jira key is still unknown at this point, so write the literal placeholder `[TBD]` everywhere a key would appear. The user will see those placeholders in the file; they are not asked to fill them in — Phase 2 replaces them with the real keys after creating the issues in Jira.
 
-- The proposed Epic title (use the PRD's H1 or filename slug as the source).
-- The numbered list of derived user stories.
-- A preview of the coverage matrix: one row per story, with a short citation list per covered cell (heading text is enough at this point). Use the stack names from `team.yaml` as column headers.
+If a `plano-<slug>.md` already exists in the cwd (for example because the user picked "new" at the invocation check while another plan file is still present), **do not overwrite it**. Pick a non-colliding slug by appending `-2`, `-3`, etc., until the filename is free. Echo the chosen filename to the user.
 
-Ask the user to confirm before any Jira write happens. Iterate until the user approves. Once approved, do not ask again in the same run.
-
-### 7. Create the Epic
-
-Use the Atlassian MCP to create exactly one Epic in the configured project. Call `createJiraIssue` with:
-
-- `cloudId`: `cloud_id` from `.spec-to-jira.yaml`.
-- `projectKey`: `project_key` from `.spec-to-jira.yaml`.
-- `issueTypeName`: `issue_types.epic` from `.spec-to-jira.yaml`.
-
-The Epic's summary is the PRD title; the description is a short pointer back to `prd_identifier`, a pointer to `tech_spec_identifier`, the snapshot timestamp, and a one-paragraph summary derived from the PRD.
-
-Capture the returned Jira key (e.g., `PROJ-1234`).
-
-### 8. Create one Story per user story
-
-For each derived user story, create a Story in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.story` from `.spec-to-jira.yaml`) and link it to the Epic. Use whichever mechanism the project supports for parenting a Story to an Epic — the `Epic Link` custom field on classic projects, or the `parent` field on next-gen / team-managed projects. If the first attempt fails because the field is not available, retry with the other mechanism before giving up.
-
-The Story summary is the user story's `<feature>` clause; the description is the full `As a … I want … so that …` sentence plus any extra context from the PRD that clarifies the story.
-
-Capture the returned Jira key for each Story.
-
-### 9. Create one Sub-task per covered (story × stack) cell
-
-For each non-empty cell in the coverage matrix, create one Sub-task in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.sub_task` from `.spec-to-jira.yaml`), parented to the corresponding Story (`parent` field set to the Story key). For each Sub-task:
-
-- **Summary**: `<title_prefix> <Story summary>` — e.g. `[cloud] Allow user to reset password`. The prefix comes from the matching stack's `title_prefix` field in `team.yaml`.
-- **Labels**: include the matching stack's `label` value from `team.yaml` — e.g. `stack:cloud`. Do not add other labels in this slice.
-- **Component**: if the matching stack has a non-empty `component` field in `team.yaml`, attach it as a Jira component. If the project does not have that component configured, skip the component silently and continue with the Sub-task creation.
-- **Description**: state which Story this Sub-task implements (by Story key) and cite the relevant tech spec section(s) for this (story, stack) cell. Use the heading text plus an anchor or section number so a reviewer can navigate back to the source. Also include `tech_spec_identifier` so a reviewer can locate the original tech spec document regardless of format.
-
-Iterate stacks in the order they appear in `team.yaml` and stories in the order they appear in the matrix, so the resulting Sub-tasks are created in a predictable sequence.
-
-Capture the returned Jira key for each Sub-task. Do not create Sub-tasks for empty cells.
-
-### 10. Write `plano-<slug>.md`
-
-In the current working directory, write a file named `plano-<slug>.md` with the following structure. The lines under the title are the **metadata header** — it lists the source identifiers (in whatever format the user supplied), the snapshot timestamp captured in step 2, and the Jira project so the artifact is fully traceable back to its inputs.
+Template (with `[TBD]` placeholders):
 
 ```
 # <PRD title>
@@ -235,63 +211,153 @@ Source tech spec: <tech_spec_identifier>
 Snapshot: <ISO 8601 timestamp captured in step 2>
 Generated: <ISO 8601 timestamp at write time>
 Jira project: <project_key>
+Status: pending review
 
 ## Epic
 
-- [<EPIC_KEY>] <Epic summary>
+- [TBD] <Epic summary>
 
 ## Stories
 
-1. [<STORY_KEY_1>] As a <actor>, I want <feature>, so that <benefit>
-2. [<STORY_KEY_2>] As a <actor>, I want <feature>, so that <benefit>
+1. [TBD] As a <actor>, I want <feature>, so that <benefit>
+2. [TBD] As a <actor>, I want <feature>, so that <benefit>
 ...
 
 ## Matriz de cobertura
 
 | História | <stack_1> | <stack_2> | ... | <stack_N> |
 |---|---|---|---|---|
-| [<STORY_KEY_1>] <feature> | ✅ <citation> | ✅ <citation> |  |  |
-| [<STORY_KEY_2>] <feature> |  | ✅ <citation> | ✅ <citation> |  |
+| [TBD] <feature_1> | ✅ <citation> | ✅ <citation> |  |  |
+| [TBD] <feature_2> |  | ✅ <citation> | ✅ <citation> |  |
 ...
 
 ## Sub-tasks
 
-- [<SUBTASK_KEY_1>] [<stack_1>] <Story summary> — parent [<STORY_KEY_1>] — cites <tech spec section>
-- [<SUBTASK_KEY_2>] [<stack_2>] <Story summary> — parent [<STORY_KEY_1>] — cites <tech spec section>
+- [TBD] [<stack_1>] <Story summary_1> — parent [TBD] (story #1) — cites <tech spec section>
+- [TBD] [<stack_2>] <Story summary_1> — parent [TBD] (story #1) — cites <tech spec section>
 ...
 ```
 
-Notes on the matrix:
+Notes on the file format:
 
-- The columns are the stack names from `team.yaml`, in the order they appear there. If the user has added or removed stacks, the matrix layout follows.
-- Cells use `✅ <citation>` when covered, with the citation being the tech spec heading text (or section number) you used. If a cell is covered by multiple tech spec sections, separate them with `; ` inside the same cell.
-- Empty cells stay literally empty between the pipes — do not write `—` or `n/a`.
-- The matrix lives at the Epic level (one matrix per Epic). Since this slice always produces exactly one Epic, there is exactly one matrix per `plano-<slug>.md`.
+- The `Status: pending review` line is the marker that this file is a Phase-1 artifact waiting for Phase 2. Phase 2 rewrites it to `Status: applied` when creation completes.
+- In the Sub-tasks list, the `(story #N)` annotation after each `parent [TBD]` records which story (by 1-based position in the Stories section) the sub-task belongs to. The user may delete that annotation if they prefer; Phase 2 will then fall back to matching the parent by Story summary text.
+- The matrix columns are the stack names from `team.yaml`, in the order they appear there. If the user has added or removed stacks, the matrix layout follows.
+- Cells use `✅ <citation>` when covered, with the citation being the tech spec heading text (or section number) you used. If a cell is covered by multiple tech spec sections, separate them with `; ` inside the same cell. Empty cells stay literally empty between the pipes — do not write `—` or `n/a`.
+- The matrix is informational. The **Stories** section drives Story creation in Phase 2; the **Sub-tasks** section drives Sub-task creation. Edits to the matrix alone do not change what gets created in Jira — only edits to the Stories and Sub-tasks lists do. If the user wants to add a sub-task that is not currently in the list, they add a line to the Sub-tasks section.
 
-If a `plano-<slug>.md` already exists in the cwd, do not overwrite silently — tell the user and ask whether to overwrite or pick a new slug.
+#### 7. Pause for review
 
-### 11. Summarize in chat
+After writing the plan file, print in chat exactly one message and **stop**. Do not continue to Phase 2 in the same turn — the user must have a chance to open the file in their editor first. Use this wording (paraphrasable, but the meaning must be preserved):
 
-Print a concise summary: the Epic key, the count of created stories, the count of created sub-tasks (broken down per stack), the list of story keys, the list of sub-task keys, and the path to the written `plano-<slug>.md`. Include a direct link to the Epic in Jira if the MCP response includes one or if `cloud_url` is set in `.spec-to-jira.yaml`.
+> Plan written to `plano-<slug>.md`. Edit the file, type `ok` when ready.
+
+Do not also print a preview of the matrix or the stories in chat — the file *is* the preview. The user reviews directly in their editor.
+
+### Pause (human checkpoint)
+
+The skill is now idle. The user edits `plano-<slug>.md` outside of chat (in their editor, on disk) and returns to chat to indicate readiness. The next user message ends the pause:
+
+- Replies that count as **approval** (resume Phase 2): `ok`, `OK`, `okay`, `go`, `proceed`, `continue`, `aprovado`, `pode ir`, or any obvious paraphrase of approval. When in doubt, ask once to confirm rather than guessing.
+- Replies that count as **cancel** (stop, leave the file in place): `cancel`, `abort`, `stop`, `cancela`, `parar`.
+- Anything else (questions, follow-up requests, asking the skill itself to edit the file): respond and continue waiting. Do not advance to Phase 2 until the user explicitly approves.
+
+If the user cancels, leave `plano-<slug>.md` on disk untouched (still `Status: pending review`). A future `/spec-to-jira` invocation will detect it via the invocation check and offer to continue it.
+
+### Phase 2 — create Jira issues from the plan file
+
+#### 8. Re-read the plan file from disk
+
+Read `plano-<slug>.md` fresh from disk with the Read tool. **Do not** rely on in-memory state from Phase 1 — the user has had a chance to edit the file, and any divergence between in-memory state and the file on disk must resolve in favor of the file. The same rule applies when Phase 2 was entered via the invocation check on a pre-existing plan file.
+
+Parse:
+
+- **PRD title** — the H1 line at the top of the file.
+- **Metadata header** — `Source PRD:`, `Source tech spec:`, `Snapshot:`, `Generated:`, `Jira project:`. The `Jira project` value must match `project_key` in `./.spec-to-jira.yaml`; if it does not, stop and tell the user the file targets a different project than the cwd is configured for.
+- **Status** — should read `pending review`. If it reads `applied`, the plan has already been pushed to Jira on a prior run; warn the user that re-running will create duplicate issues and ask for an explicit re-confirmation before proceeding.
+- **Epic line** — the single `- [<key>] <summary>` line in the `## Epic` section. The `<key>` is `[TBD]` for a fresh plan or a real Jira key for a partially-completed prior run.
+- **Stories** — every `<n>. [<key>] <story sentence>` line in the `## Stories` section, in the order they appear. Each line becomes one Story to create (or, if it already carries a real key, one already-created Story whose key is captured for parenting).
+- **Sub-tasks** — every `- [<key>] [<stack>] <summary> — parent [<parent_key>] (story #N) — cites <citation>` line in the `## Sub-tasks` section. Parse the `[<stack>]` tag to look up the corresponding stack in `team.yaml`. Parse the `parent [<parent_key>] (story #N)` to identify the parent Story — prefer the explicit Story key when present, fall back to story index `N`, fall back to matching the parent summary text against the Stories list.
+
+If a line in the Stories section was deleted by the user, do not create that Story — and skip every Sub-task whose parent annotation points at the deleted story. If a line in the Sub-tasks section was deleted, do not create that Sub-task. **This is how the user vetoes items during review**: just delete the line.
+
+If a line was edited (story title rewritten, sub-task title rewritten, citation reworded), use the **edited** text when creating the Jira issue. The file is authoritative.
+
+If the file is malformed (missing H1, broken metadata header, empty Stories section), stop and tell the user exactly which section is malformed. Do not guess.
+
+#### 9. Create the Epic
+
+Use the Atlassian MCP to create exactly one Epic in the configured project. Call `createJiraIssue` with:
+
+- `cloudId`: `cloud_id` from `.spec-to-jira.yaml`.
+- `projectKey`: `project_key` from `.spec-to-jira.yaml`.
+- `issueTypeName`: `issue_types.epic` from `.spec-to-jira.yaml`.
+
+The Epic's summary is the text after `[TBD]` (or after the existing real key) on the Epic line — i.e., whatever the user left there during review. The description is a short pointer back to `prd_identifier`, a pointer to `tech_spec_identifier`, the snapshot timestamp, and a one-paragraph summary derived from the PRD.
+
+If the Epic line already carries a real Jira key (resumed plan), skip creation and use the existing key as the parent for Stories.
+
+Capture the returned Jira key (e.g., `PROJ-1234`).
+
+#### 10. Create one Story per Stories-section line
+
+For each line still present in the `## Stories` section, create a Story in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.story` from `.spec-to-jira.yaml`) and link it to the Epic. Use whichever mechanism the project supports for parenting a Story to an Epic — the `Epic Link` custom field on classic projects, or the `parent` field on next-gen / team-managed projects. If the first attempt fails because the field is not available, retry with the other mechanism before giving up.
+
+The Story summary is derived from the **user-edited** story sentence in the file — extract the `<feature>` clause from the `As a <actor>, I want <feature>, so that <benefit>` pattern when present; otherwise use the full edited sentence as the summary. The description is the full story sentence as written in the file plus any extra context the user kept in the file.
+
+If a Stories line already carries a real Jira key (resumed plan), skip creation and remember the existing key for sub-task parenting.
+
+Capture the returned Jira key for each Story.
+
+#### 11. Create one Sub-task per Sub-tasks-section line
+
+For each line still present in the `## Sub-tasks` section, create one Sub-task in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.sub_task` from `.spec-to-jira.yaml`), parented to the resolved Story key from step 10. For each Sub-task:
+
+- **Summary**: the text on the sub-task line between the `[<stack>]` tag and the ` — parent ` separator. This is the user-editable title — use whatever the user wrote, do not regenerate it from the Story summary or the stack `title_prefix`. The `title_prefix` only seeded the line in Phase 1; once written to disk, the user owns it.
+- **Labels**: include the matching stack's `label` value from `team.yaml` — e.g. `stack:cloud`. Do not add other labels in this slice.
+- **Component**: if the matching stack has a non-empty `component` field in `team.yaml`, attach it as a Jira component. If the project does not have that component configured, skip the component silently and continue with the Sub-task creation.
+- **Description**: state which Story this Sub-task implements (by Story key) and cite the relevant tech spec section as written on the line. Also include `tech_spec_identifier` so a reviewer can locate the original tech spec document regardless of format.
+
+If a sub-task line already carries a real Jira key (resumed plan), skip creation and remember the existing key.
+
+Iterate the Sub-tasks section in the order the lines appear in the file. Capture the returned Jira key for each Sub-task.
+
+#### 12. Update the plan file with the real Jira keys
+
+Rewrite `plano-<slug>.md` in place to reflect the created Jira issues. Specifically:
+
+- Replace each `[TBD]` placeholder with the real Jira key for that Epic / Story / Sub-task.
+- Rewrite the matrix's first column (`| [TBD] <feature> |` becomes `| <STORY_KEY> <feature> |`) and the `parent [TBD]` references in the Sub-tasks section so they point at the created Story keys.
+- Change the `Status:` header from `pending review` to `applied`.
+- If a particular item failed to create, leave its `[TBD]` placeholder in place and append ` — ❌ <reason>` to that line so the user can see which items failed and re-run them later. Use `❌ <reason>` inside matrix cells for failed sub-tasks (instead of `✅ <citation>`).
+
+Do not change anything else in the file — preserve every user edit to titles, citations, and order.
+
+#### 13. Summarize in chat
+
+Print a concise summary: the Epic key, the count of created stories, the count of created sub-tasks (broken down per stack), the list of story keys, the list of sub-task keys, and the path to the updated `plano-<slug>.md`. Include a direct link to the Epic in Jira if the MCP response includes one or if `cloud_url` is set in `.spec-to-jira.yaml`.
 
 If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, mention it explicitly so the user knows to review and commit the file.
 
 ## Failure handling
 
-- If the Atlassian MCP is not configured or authentication fails — at auto-detect time, at Jira-key fetch time, at Epic creation, or anywhere else — stop and tell the user how to authenticate. Do not write a partial `.spec-to-jira.yaml` or a partial `plano-<slug>.md`.
+- If the Atlassian MCP is not configured or authentication fails — at auto-detect time, at Jira-key fetch time, at Epic creation, or anywhere else — stop and tell the user how to authenticate. Do not write a partial `.spec-to-jira.yaml`, and do not flip `Status:` in the plan file.
 - If a **Jira issue key** input refers to a missing or inaccessible issue, stop and tell the user the issue key was not found. Do **not** fall back to paste-or-path — the Atlassian MCP is needed later anyway, so masking its failure here only delays the same error.
 - If a **Google Docs URL** input cannot be fetched (Drive MCP missing, auth failure, access denied, empty body), trigger the paste-or-path fallback described in "Input resolution". Do not abort.
 - If a **local `.md` path** input does not exist or is not a `.md` file, stop and tell the user. Do not auto-fall-back — the user typed a path, not a URL, so paste-or-path would be surprising here.
 - If `team.yaml` is missing, write the default file and continue. Never abort the run because of a missing `team.yaml` — the default is always usable.
 - If the auto-detected project has no Sub-task issue type (or the equivalent), stop and tell the user before writing `.spec-to-jira.yaml`. This skill requires the three-level hierarchy.
-- If Story creation fails partway through, do not roll back created issues (this slice never deletes). Continue to Sub-task creation for whatever Stories did succeed. Write `plano-<slug>.md` with whatever was created so the user can see the partial state, and clearly mark which user stories failed so the user can re-run manually.
-- If Sub-task creation fails for a particular cell, log it inline in the matrix (write `❌ <reason>` in the cell instead of `✅ <citation>`) and move on. Do not abort the whole run for a single Sub-task failure.
+- If the user **deletes** `plano-<slug>.md` during the pause, Phase 2 cannot proceed — the plan is gone. When the user types `ok`, tell them the file is missing and stop. The user can re-invoke the skill to start over.
+- If the plan file is **malformed** when Phase 2 re-reads it (missing H1, broken metadata header, empty Stories section, mismatched `Jira project` value), stop and tell the user exactly which section is malformed. Do not guess.
+- If the plan file reads `Status: applied`, the plan was already pushed to Jira on a prior run. Warn the user that re-running will create duplicate issues and require an explicit re-confirmation before proceeding. The skill does not deduplicate.
+- If Story creation fails partway through, do not roll back created issues (this slice never deletes). Continue to Sub-task creation for whatever Stories did succeed. Update `plano-<slug>.md` with whatever was created so the user can see the partial state, and clearly mark which user stories failed (append ` — ❌ <reason>` to the failed line and leave its `[TBD]` placeholder in place) so the user can fix and re-run.
+- If Sub-task creation fails for a particular line, log it inline (append ` — ❌ <reason>` to the line, leave the `[TBD]` placeholder in place, and write `❌ <reason>` in the corresponding matrix cell instead of `✅ <citation>`) and move on. Do not abort the whole run for a single Sub-task failure.
 
 ## Out of scope for this slice
 
-- Review-pause workflow (editing the `.md` and approving with `ok`).
 - Multi-milestone handling — this slice always creates exactly one Epic.
-- Idempotent re-runs — re-running on the same PRD + tech spec will create duplicate Jira issues. The user is responsible for not doing that yet. (The snapshot timestamp in the metadata header makes duplicate runs easier to spot manually, but the skill does not yet deduplicate.)
+- Full idempotent re-runs — re-running on an `applied` plan will warn the user but otherwise create duplicate Jira issues if the user confirms. The only resume case this slice handles natively is a paused plan where some lines already carry real keys (e.g., the Epic was created on a prior turn but Stories were not) — Phase 2 detects real keys per line and skips creation for those lines, but still creates everything else.
 - Tech specs organized per user story (Type-2). Only Type-1 (per stack) is supported in this slice.
 - Creating "blocks" / "is blocked by" links between issues. The link type names are persisted in `.spec-to-jira.yaml` so future slices can use them, but this slice does not create any link.
-- Auto-refresh: once the PRD or tech spec content is captured in step 2, the skill operates on that snapshot. If the source document changes later, the user must re-run the skill to pick up the change.
+- Auto-refresh: once the PRD or tech spec content is captured in Phase 1 step 2, the skill operates on that snapshot. If the source document changes later, the user must re-run the skill to pick up the change.
+- Live syncing between the plan file and Jira after Phase 2 completes — edits to the plan file after `Status:` flips to `applied` do not propagate back to Jira. The user would need a fresh run.
