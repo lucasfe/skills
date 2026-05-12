@@ -1,13 +1,13 @@
 ---
 name: spec-to-jira
-description: Take a PRD and a Type-1 tech spec — each supplied as a local `.md` path, a Google Docs URL, a Jira issue key, or pasted content — derive user stories, perform an inverted scan across stack sections, write a `plano-<slug>.md` plan file in the cwd, and pause for human review. When the user edits the file and types `ok`, the skill re-reads the `.md` from disk as the source of truth and creates one Epic + one Story per user story + one Sub-task per covered (story × stack) cell in Jira via the Atlassian MCP. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml`; per-cwd Jira target lives in `./.spec-to-jira.yaml` (auto-detected via MCP on first run). On invocation, if a `plano-*.md` already exists in the cwd, the skill asks whether to continue that plan or create a new one. Records source identifiers, a snapshot timestamp, the Epic key, Story keys, and a "Matriz de cobertura" table. Invoking with no arguments triggers interactive prompts for both sources. Use when user wants to bootstrap a Jira hierarchy with stack-split sub-tasks from a PRD and a tech spec, with a human checkpoint between planning and Jira creation.
+description: Take a PRD and a Type-1 tech spec — each supplied as a local `.md` path, a Google Docs URL, a Jira issue key, or pasted content — detect milestone boundaries in the PRD, derive user stories per milestone, perform an inverted scan across stack sections, write a `plano-<slug>.md` plan file in the cwd structured as `## Epic N — <name>` sections (each with its own stories, matrix, sub-tasks, and dependencies), and pause for human review. When the user edits the file and types `ok`, the skill re-reads the `.md` from disk as the source of truth and creates one Epic per milestone in Jira via the Atlassian MCP, plus one Story per user story under the right Epic and one Sub-task per covered (story × stack) cell. Milestones are detected from explicit `## Milestone X` headings when present, inferred from PRD structure otherwise. Stack vocabulary lives in `~/.config/spec-to-jira/team.yaml`; per-cwd Jira target lives in `./.spec-to-jira.yaml` (auto-detected via MCP on first run). On invocation, if a `plano-*.md` already exists in the cwd, the skill asks whether to continue that plan or create a new one. Records source identifiers, a snapshot timestamp, Epic keys per milestone, Story keys, and a coverage matrix per Epic. Invoking with no arguments triggers interactive prompts for both sources. Use when user wants to bootstrap a multi-milestone Jira hierarchy with stack-split sub-tasks from a PRD and a tech spec, with a human checkpoint between planning and Jira creation.
 ---
 
-# Spec to Jira (slice 3 — review pause, .md as source of truth)
+# Spec to Jira (slice 4 — multi-milestone, N Epics per PRD)
 
-Take a PRD and a Type-1 tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — derive a list of user stories from the PRD, perform an inverted scan of the tech spec to build a coverage matrix (user story × stack), write a `plano-<slug>.md` plan file in the current working directory, and **pause** for the user to review and edit it. When the user types `ok`, the skill re-reads `plano-<slug>.md` from disk and treats it as the source of truth: it creates the Epic, Stories, and Sub-tasks in Jira via the Atlassian MCP exactly as the file now describes them, including any edits the user made during the pause.
+Take a PRD and a Type-1 tech spec — each accepted as a local `.md` path, a Google Docs URL, a Jira issue key, or content pasted directly into chat — detect milestone boundaries in the PRD, derive a list of user stories **per milestone**, perform an inverted scan of the tech spec to build a coverage matrix (user story × stack) **per milestone**, write a `plano-<slug>.md` plan file in the current working directory structured as `## Epic N — <name>` sections, and **pause** for the user to review and edit it. When the user types `ok`, the skill re-reads `plano-<slug>.md` from disk and treats it as the source of truth: it creates one Epic per milestone, plus the Stories and Sub-tasks under the right Epic, in Jira via the Atlassian MCP exactly as the file now describes them, including any edits the user made during the pause — including stories moved between Epics or whole Epics renamed, added, or deleted.
 
-This slice extends slice 8 by splitting the previously single-pass flow into two phases with a human checkpoint in between, and by detecting pre-existing `plano-*.md` files in the cwd so a paused run can be resumed (or so the user can choose to start fresh). Edits the user makes to the plan file — renamed story titles, renamed sub-task titles, deleted lines — propagate to the Jira issues that get created. Multi-milestone handling and idempotent re-runs remain out of scope.
+This slice extends slice 3 by detecting milestone boundaries in the PRD and producing one Epic per milestone in Jira, with the plan file structured as `## Epic N — <name>` sections. Detection prefers explicit `## Milestone X` headings in the PRD; when those are absent, the skill infers milestone groupings from PRD structure and prose. The plan file's per-Epic layout lets the user move user stories between Epics, rename Epics, add new Epics, or delete an Epic entirely by editing the file before approval — the change propagates to the Jira issues that get created. Idempotent re-runs and creation of Jira "blocks" links between Epics remain out of scope.
 
 ## Invocation
 
@@ -166,9 +166,21 @@ The skill runs in two phases separated by a human review pause. Phase 1 builds t
 - Capture a snapshot timestamp at this point as an ISO 8601 string (e.g., `2026-05-11T14:23:07Z`). This is the value that goes into the plan file's metadata header so a reader can tell when the source documents were captured.
 - Pick a slug for the plan filename from the PRD's first H1 title (lowercased, kebab-case, ASCII-only). If there is no H1, derive the slug from `prd_identifier`: take the basename for a path, the document ID segment for a Google Docs URL, the lowercased issue key for a Jira key, or `pasted` for pasted content. Still kebab-case and ASCII-only.
 
-#### 3. Derive user stories from the PRD
+#### 3. Detect milestones and derive user stories per milestone
 
-Read the PRD and derive a list of well-defined user stories. Prefer stories that are already written in `As a <actor>, I want <feature>, so that <benefit>` form; if the PRD lacks them, synthesize the list from the problem statement, solution, and acceptance criteria sections. Each story must be a single, independently-meaningful unit of user value — do not stitch multiple goals into one story, and do not split a single goal across multiple stories.
+The PRD becomes one or more milestones; each milestone produces exactly one Epic in Phase 2. Use this detection order — first match wins:
+
+1. **Explicit milestone headings (preferred)**: scan for level-2 headings whose text starts with one of `Milestone`, `Marco`, `Fase`, `Phase`, or `Release` (case-insensitive). Examples that match: `## Milestone 1`, `## Milestone — Authentication`, `## Phase 2: Admin Tools`, `## Marco 1 — Lançamento`, `## Release: V2`. Each matched heading opens a new milestone whose **name** is the heading text with the leading prefix (and any `N — ` / `N: ` numbering) stripped — e.g., `## Milestone 1 — Authentication` → `Authentication`. If the heading is just `## Milestone 1` with no name part, fall back to `Milestone 1`.
+2. **Inferred groupings (fallback)**: if no explicit milestone headings exist, look for other structural signals — sub-headings like `### Now / Later`, `### MVP / V2`, `### Short-term / Long-term`, numbered roadmap-style lists, or prose like "First, ship X. Once X is in place, add Y." Each detected grouping becomes a milestone whose name is taken from the grouping label (or synthesized as `Milestone 1`, `Milestone 2`, … if no label is available). Be conservative — only split when the signal is unambiguous. When in doubt, prefer fewer milestones; the user can split further during review.
+3. **Single-milestone fallback**: if no structural signal at all is found, treat the entire PRD as one milestone whose name is the PRD's H1 title.
+
+Number the detected milestones starting at 1, in the order they appear in the PRD. The plan file always uses the `## Epic N — <name>` structure even when N=1 — there is no special-case single-Epic shorthand.
+
+For each detected milestone, derive its own list of well-defined user stories from the prose belonging to that milestone section. Prefer stories that are already written in `As a <actor>, I want <feature>, so that <benefit>` form; if the PRD lacks them, synthesize the list from the milestone's problem statement, solution, and acceptance criteria. Each story must be a single, independently-meaningful unit of user value — do not stitch multiple goals into one story, and do not split a single goal across multiple stories.
+
+Stories that appear in a "shared", "cross-cutting", or otherwise milestone-agnostic section of the PRD are assigned to **Milestone 1** by default. The user can move them in the review step.
+
+Also capture, per milestone, any **dependencies** declared in the PRD — e.g. "Milestone 2 depends on Milestone 1", "blocked by the auth rollout in Phase 1", "requires X to ship first". Record them as a list of milestone numbers / names that the current milestone depends on. If a stated dependency points at a milestone not present in the PRD, keep it as a free-text note; do not invent dependencies. The user can edit the dependency list during review. This slice does **not** create the corresponding Jira "blocks" links — the dependency list is informational and persisted in the plan file and in each Epic's Jira description for a future slice (see "Out of scope").
 
 #### 4. Identify the tech spec's stack sections (Type-1 organization)
 
@@ -184,11 +196,11 @@ Capture, per stack, the list of headings (with their heading text and an anchor 
 
 If none of the configured stacks are represented in the tech spec at all (e.g., the tech spec is empty or unrelated), stop and tell the user — there is nothing to scan.
 
-#### 5. Inverted scan → coverage matrix
+#### 5. Inverted scan → coverage matrix per milestone
 
-For each derived user story, scan **all configured stack sections** of the tech spec and identify the specific tech spec section(s) that describe implementation work needed to deliver that story. The scan is **inverted**: the user story drives the lookup, and the tech spec is the lookup target.
+For each derived user story (across **all** milestones), scan **all configured stack sections** of the tech spec and identify the specific tech spec section(s) that describe implementation work needed to deliver that story. The scan is **inverted**: the user story drives the lookup, and the tech spec is the lookup target. The tech spec itself does not need to be split per milestone — the same tech spec sections may legitimately cover stories from multiple milestones.
 
-The output is a coverage matrix with one row per user story and one column per stack defined in `team.yaml` (in the order they appear there). Each cell is either:
+The output is **one coverage matrix per milestone**, with one row per user story in that milestone and one column per stack defined in `team.yaml` (in the order they appear there). Each cell is either:
 
 - **Covered**: a non-empty list of tech spec section citations (heading text + anchor or section number) that describe the relevant implementation work for that story in that stack.
 - **Empty**: no tech spec section in that stack describes work needed for this story. Leave the cell blank in the matrix and create no Sub-task for that cell.
@@ -213,17 +225,17 @@ Generated: <ISO 8601 timestamp at write time>
 Jira project: <project_key>
 Status: pending review
 
-## Epic
+## Epic 1 — <Milestone 1 name>
 
-- [TBD] <Epic summary>
+Depends on: (none)
 
-## Stories
+### Stories
 
 1. [TBD] As a <actor>, I want <feature>, so that <benefit>
 2. [TBD] As a <actor>, I want <feature>, so that <benefit>
 ...
 
-## Matriz de cobertura
+### Matriz de cobertura
 
 | História | <stack_1> | <stack_2> | ... | <stack_N> |
 |---|---|---|---|---|
@@ -231,20 +243,48 @@ Status: pending review
 | [TBD] <feature_2> |  | ✅ <citation> | ✅ <citation> |  |
 ...
 
-## Sub-tasks
+### Sub-tasks
 
 - [TBD] [<stack_1>] <Story summary_1> — parent [TBD] (story #1) — cites <tech spec section>
 - [TBD] [<stack_2>] <Story summary_1> — parent [TBD] (story #1) — cites <tech spec section>
+...
+
+## Epic 2 — <Milestone 2 name>
+
+Depends on: Epic 1
+
+### Stories
+
+1. [TBD] As a <actor>, I want <feature>, so that <benefit>
+...
+
+### Matriz de cobertura
+
+| História | <stack_1> | <stack_2> | ... | <stack_N> |
+|---|---|---|---|---|
+| [TBD] <feature_X> | ✅ <citation> |  |  |  |
+...
+
+### Sub-tasks
+
+- [TBD] [<stack_1>] <Story summary_X> — parent [TBD] (story #1) — cites <tech spec section>
 ...
 ```
 
 Notes on the file format:
 
-- The `Status: pending review` line is the marker that this file is a Phase-1 artifact waiting for Phase 2. Phase 2 rewrites it to `Status: applied` when creation completes.
-- In the Sub-tasks list, the `(story #N)` annotation after each `parent [TBD]` records which story (by 1-based position in the Stories section) the sub-task belongs to. The user may delete that annotation if they prefer; Phase 2 will then fall back to matching the parent by Story summary text.
-- The matrix columns are the stack names from `team.yaml`, in the order they appear there. If the user has added or removed stacks, the matrix layout follows.
+- The top-level `Status: pending review` line is the marker that this file is a Phase-1 artifact waiting for Phase 2. Phase 2 rewrites it to `Status: applied` when creation completes. There is exactly one `Status:` line in the whole file — it is **not** repeated per Epic.
+- Each milestone gets its own `## Epic N — <name>` section. Epic numbering is 1-based and follows the order milestones appear in the PRD. The Epic **name** comes from the milestone name detected in step 3.
+- The `Depends on:` line directly under each Epic heading lists the Epics this one depends on, by Epic number or name (e.g., `Depends on: Epic 1`, `Depends on: Epic 1, Epic 2`, `Depends on: (none)`). The list is informational — this slice does not create Jira "blocks" links — but it is persisted in the file and copied into each Epic's Jira description in Phase 2. The user may edit it during review or set it to `(none)`.
+- Inside each Epic section, stories are numbered 1-based **within that Epic**. The same story number can appear in two different Epics — `(story #1)` in Sub-tasks always refers to story #1 of the **same enclosing Epic**.
+- In the Sub-tasks subsection under an Epic, the `(story #N)` annotation after each `parent [TBD]` records which story (by 1-based position in the **enclosing Epic's** Stories subsection) the sub-task belongs to. The user may delete that annotation if they prefer; Phase 2 will then fall back to matching the parent by Story summary text within the same Epic.
+- The matrix columns are the stack names from `team.yaml`, in the order they appear there. Each Epic has its own matrix listing only the stories in that Epic.
 - Cells use `✅ <citation>` when covered, with the citation being the tech spec heading text (or section number) you used. If a cell is covered by multiple tech spec sections, separate them with `; ` inside the same cell. Empty cells stay literally empty between the pipes — do not write `—` or `n/a`.
-- The matrix is informational. The **Stories** section drives Story creation in Phase 2; the **Sub-tasks** section drives Sub-task creation. Edits to the matrix alone do not change what gets created in Jira — only edits to the Stories and Sub-tasks lists do. If the user wants to add a sub-task that is not currently in the list, they add a line to the Sub-tasks section.
+- The matrix is informational. The **Stories** subsection drives Story creation in Phase 2; the **Sub-tasks** subsection drives Sub-task creation. Edits to the matrix alone do not change what gets created in Jira — only edits to the Stories and Sub-tasks subsections do. If the user wants to add a sub-task that is not currently in the list, they add a line to the right Epic's Sub-tasks subsection.
+- **Moving a story between Epics**: the user cuts the story line from one Epic's `### Stories` and pastes it into another Epic's `### Stories`. They also move the corresponding row in `### Matriz de cobertura` and **all** matching lines in `### Sub-tasks` of the same Epic. Phase 2 will then create the story under the destination Epic. If the user moves the story but forgets to move its sub-tasks, those sub-tasks become orphaned (their `parent [TBD] (story #N)` annotation does not match a story in the same Epic) — Phase 2 will warn and skip them rather than reassign them silently across Epics.
+- **Renaming an Epic**: edit the text after ` — ` on the `## Epic N — <name>` line. Do not change the `N` — Epic numbers are positional. If the user renumbers Epics by hand, Phase 2 still treats them in the order they appear in the file.
+- **Deleting an Epic**: delete the entire `## Epic N — <name>` heading and its `Depends on`, `### Stories`, `### Matriz de cobertura`, and `### Sub-tasks` subsections. Phase 2 will not create that Epic, its Stories, or its Sub-tasks.
+- **Adding a new Epic**: append a new `## Epic N — <name>` section at the end of the file with the next integer in sequence. Use `[TBD]` for the keys on every line inside. Include a `Depends on:` line (use `(none)` if there are no dependencies) and the four subsections (`### Stories`, `### Matriz de cobertura`, `### Sub-tasks`).
 
 #### 7. Pause for review
 
@@ -275,43 +315,54 @@ Parse:
 - **PRD title** — the H1 line at the top of the file.
 - **Metadata header** — `Source PRD:`, `Source tech spec:`, `Snapshot:`, `Generated:`, `Jira project:`. The `Jira project` value must match `project_key` in `./.spec-to-jira.yaml`; if it does not, stop and tell the user the file targets a different project than the cwd is configured for.
 - **Status** — should read `pending review`. If it reads `applied`, the plan has already been pushed to Jira on a prior run; warn the user that re-running will create duplicate issues and ask for an explicit re-confirmation before proceeding.
-- **Epic line** — the single `- [<key>] <summary>` line in the `## Epic` section. The `<key>` is `[TBD]` for a fresh plan or a real Jira key for a partially-completed prior run.
-- **Stories** — every `<n>. [<key>] <story sentence>` line in the `## Stories` section, in the order they appear. Each line becomes one Story to create (or, if it already carries a real key, one already-created Story whose key is captured for parenting).
-- **Sub-tasks** — every `- [<key>] [<stack>] <summary> — parent [<parent_key>] (story #N) — cites <citation>` line in the `## Sub-tasks` section. Parse the `[<stack>]` tag to look up the corresponding stack in `team.yaml`. Parse the `parent [<parent_key>] (story #N)` to identify the parent Story — prefer the explicit Story key when present, fall back to story index `N`, fall back to matching the parent summary text against the Stories list.
+- **Epics** — every `## Epic N — <name>` heading, in the order they appear in the file. For each Epic, parse:
+  - The Epic's **name** — the text after ` — ` on the heading line.
+  - The Epic's **Jira key** — for a fresh plan the heading has no key; for a partially-completed prior run the heading reads `## Epic N — <name> [<KEY>]`. Record the key when present, treat its absence as "needs creation".
+  - The **Depends on** line directly under the heading — a comma-separated list of Epic numbers / names, or `(none)`. Record it verbatim for the Jira description in step 9 and for the rewrite in step 12. This slice does not create Jira links.
+  - The Epic's **Stories** — every `<n>. [<key>] <story sentence>` line in the Epic's `### Stories` subsection, in the order they appear. Each line becomes one Story belonging to this Epic. If a line already carries a real key, capture it for parenting and skip creation.
+  - The Epic's **Sub-tasks** — every `- [<key>] [<stack>] <summary> — parent [<parent_key>] (story #N) — cites <citation>` line in the Epic's `### Sub-tasks` subsection. Parse the `[<stack>]` tag to look up the corresponding stack in `team.yaml`. Resolve the parent Story key in this order: explicit Story key when present, story index `N` within the **same Epic**, parent summary text matched against the Stories of the **same Epic**. If none of those resolve to a Story in the same Epic, the sub-task is **orphaned** — flag it but do not reassign across Epics (see step 11).
+  - The Epic's **Matriz de cobertura** — informational only, not parsed for issue creation. Phase 2 rewrites it in step 12 to reflect the real Story keys.
 
-If a line in the Stories section was deleted by the user, do not create that Story — and skip every Sub-task whose parent annotation points at the deleted story. If a line in the Sub-tasks section was deleted, do not create that Sub-task. **This is how the user vetoes items during review**: just delete the line.
+If a line in an Epic's Stories subsection was deleted by the user, do not create that Story — and skip every Sub-task in the same Epic whose parent annotation points at the deleted story. If a line in a Sub-tasks subsection was deleted, do not create that Sub-task. If an entire `## Epic N — <name>` section (heading + subsections) was deleted, skip the Epic, all its Stories, and all its Sub-tasks. **This is how the user vetoes items during review**: just delete the line (or the whole Epic section).
 
-If a line was edited (story title rewritten, sub-task title rewritten, citation reworded), use the **edited** text when creating the Jira issue. The file is authoritative.
+If a line was edited (story title rewritten, sub-task title rewritten, citation reworded, Epic renamed, dependency list changed), use the **edited** text when creating the Jira issue. The file is authoritative.
 
-If the file is malformed (missing H1, broken metadata header, empty Stories section), stop and tell the user exactly which section is malformed. Do not guess.
+If the file is malformed (missing H1, broken metadata header, zero `## Epic N — <name>` sections, or an Epic section that has Sub-task lines but no `### Stories` subsection), stop and tell the user exactly which section is malformed. Do not guess. A missing `### Matriz de cobertura` is **not** malformed — it is regenerated in step 12 from the Stories and Sub-tasks subsections of the same Epic.
 
-#### 9. Create the Epic
+#### 9. Create one Epic per milestone
 
-Use the Atlassian MCP to create exactly one Epic in the configured project. Call `createJiraIssue` with:
+Iterate the `## Epic N — <name>` sections in the order they appear in the file. For each Epic still present (i.e., not deleted by the user), use the Atlassian MCP to create one Epic in the configured project. Call `createJiraIssue` with:
 
 - `cloudId`: `cloud_id` from `.spec-to-jira.yaml`.
 - `projectKey`: `project_key` from `.spec-to-jira.yaml`.
 - `issueTypeName`: `issue_types.epic` from `.spec-to-jira.yaml`.
 
-The Epic's summary is the text after `[TBD]` (or after the existing real key) on the Epic line — i.e., whatever the user left there during review. The description is a short pointer back to `prd_identifier`, a pointer to `tech_spec_identifier`, the snapshot timestamp, and a one-paragraph summary derived from the PRD.
+For each Epic:
 
-If the Epic line already carries a real Jira key (resumed plan), skip creation and use the existing key as the parent for Stories.
+- **Summary**: the name on the `## Epic N — <name>` heading — i.e., whatever the user left there during review (renames are honored).
+- **Description**: a short pointer back to `prd_identifier`, a pointer to `tech_spec_identifier`, the snapshot timestamp, a one-paragraph summary derived from the PRD section for that milestone, and the Epic's `Depends on:` list verbatim (so a reviewer can see the declared dependencies even though they are not Jira link issues yet).
 
-Capture the returned Jira key (e.g., `PROJ-1234`).
+If an Epic heading already carries a real Jira key (resumed plan), skip creation and use the existing key as the parent for that Epic's Stories.
 
-#### 10. Create one Story per Stories-section line
+Capture the returned Jira key for each Epic (e.g., `PROJ-1234`).
 
-For each line still present in the `## Stories` section, create a Story in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.story` from `.spec-to-jira.yaml`) and link it to the Epic. Use whichever mechanism the project supports for parenting a Story to an Epic — the `Epic Link` custom field on classic projects, or the `parent` field on next-gen / team-managed projects. If the first attempt fails because the field is not available, retry with the other mechanism before giving up.
+If Epic creation fails for one milestone, do not abort the whole run — record the failure (it will be surfaced in step 12) and continue with the next Epic. Stories and Sub-tasks belonging to a failed Epic are skipped in steps 10 and 11.
+
+#### 10. Create one Story per Stories line, parented to its Epic
+
+For each Epic in turn, iterate every line still present in that Epic's `### Stories` subsection and create one Story in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.story` from `.spec-to-jira.yaml`), linked to **that Epic's** key from step 9. Use whichever mechanism the project supports for parenting a Story to an Epic — the `Epic Link` custom field on classic projects, or the `parent` field on next-gen / team-managed projects. If the first attempt fails because the field is not available, retry with the other mechanism before giving up.
+
+A user who moved a story between Epics (cut from Epic 1's `### Stories`, paste into Epic 2's `### Stories`) before approval will see the Story created under Epic 2's key here — the file's structure drives parenting, not any memory of the original Phase 1 assignment.
 
 The Story summary is derived from the **user-edited** story sentence in the file — extract the `<feature>` clause from the `As a <actor>, I want <feature>, so that <benefit>` pattern when present; otherwise use the full edited sentence as the summary. The description is the full story sentence as written in the file plus any extra context the user kept in the file.
 
-If a Stories line already carries a real Jira key (resumed plan), skip creation and remember the existing key for sub-task parenting.
+If a Stories line already carries a real Jira key (resumed plan), skip creation and remember the existing key for sub-task parenting. The Story's Epic parent is **not** re-validated for resumed lines — once a Story is in Jira, this slice does not move it between Epics. If the user moved a real-key Story line between Epics in the file, the file and Jira are now out of sync; flag it for the summary in step 13 and leave the Jira parenting alone.
 
-Capture the returned Jira key for each Story.
+Capture the returned Jira key for each Story and remember which Epic it belongs to (used by step 11 for orphan detection).
 
-#### 11. Create one Sub-task per Sub-tasks-section line
+#### 11. Create one Sub-task per Sub-tasks line, parented to its Story
 
-For each line still present in the `## Sub-tasks` section, create one Sub-task in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.sub_task` from `.spec-to-jira.yaml`), parented to the resolved Story key from step 10. For each Sub-task:
+For each Epic in turn, iterate every line still present in that Epic's `### Sub-tasks` subsection and create one Sub-task in the same project (`createJiraIssue` with `issueTypeName` set to `issue_types.sub_task` from `.spec-to-jira.yaml`), parented to the resolved Story key from step 10 — where parent resolution is scoped to the **same Epic** (see step 8 for the resolution order). For each Sub-task:
 
 - **Summary**: the text on the sub-task line between the `[<stack>]` tag and the ` — parent ` separator. This is the user-editable title — use whatever the user wrote, do not regenerate it from the Story summary or the stack `title_prefix`. The `title_prefix` only seeded the line in Phase 1; once written to disk, the user owns it.
 - **Labels**: include the matching stack's `label` value from `team.yaml` — e.g. `stack:cloud`. Do not add other labels in this slice.
@@ -320,22 +371,32 @@ For each line still present in the `## Sub-tasks` section, create one Sub-task i
 
 If a sub-task line already carries a real Jira key (resumed plan), skip creation and remember the existing key.
 
-Iterate the Sub-tasks section in the order the lines appear in the file. Capture the returned Jira key for each Sub-task.
+If a sub-task's parent annotation does not resolve to any Story line in the same Epic (an **orphan** — typically because the user moved the parent story to another Epic but forgot to move the sub-task), warn the user in the chat summary, append ` — ⚠️ orphan parent` to the line during the step 12 rewrite, and skip creation. Do not reassign the sub-task across Epics on the user's behalf.
+
+Iterate Sub-tasks in this order: outer loop = Epics in file order; inner loop = Sub-tasks in line order within each Epic. Capture the returned Jira key for each Sub-task.
 
 #### 12. Update the plan file with the real Jira keys
 
 Rewrite `plano-<slug>.md` in place to reflect the created Jira issues. Specifically:
 
-- Replace each `[TBD]` placeholder with the real Jira key for that Epic / Story / Sub-task.
-- Rewrite the matrix's first column (`| [TBD] <feature> |` becomes `| <STORY_KEY> <feature> |`) and the `parent [TBD]` references in the Sub-tasks section so they point at the created Story keys.
-- Change the `Status:` header from `pending review` to `applied`.
-- If a particular item failed to create, leave its `[TBD]` placeholder in place and append ` — ❌ <reason>` to that line so the user can see which items failed and re-run them later. Use `❌ <reason>` inside matrix cells for failed sub-tasks (instead of `✅ <citation>`).
+- On each `## Epic N — <name>` heading whose Epic was created, append ` [<EPIC_KEY>]` so the heading reads `## Epic N — <name> [<EPIC_KEY>]`. If an Epic failed to create, leave its heading untouched and append ` — ❌ <reason>` to the heading line; skip the per-Epic Story / Sub-task replacements for that Epic and leave their `[TBD]` placeholders in place.
+- Replace each `[TBD]` placeholder on Story and Sub-task lines with the real Jira key.
+- For each Epic, rewrite its matrix's first column (`| [TBD] <feature> |` becomes `| <STORY_KEY> <feature> |`) and the `parent [TBD]` references in its Sub-tasks subsection so they point at the created Story keys within the same Epic.
+- Change the top-level `Status:` header from `pending review` to `applied`.
+- If a particular Story or Sub-task failed to create, leave its `[TBD]` placeholder in place and append ` — ❌ <reason>` to that line so the user can see which items failed and re-run them later. Use `❌ <reason>` inside matrix cells for failed sub-tasks (instead of `✅ <citation>`).
+- For orphaned sub-tasks (parent in another Epic), keep the `[TBD]` placeholder and append ` — ⚠️ orphan parent` per step 11.
 
-Do not change anything else in the file — preserve every user edit to titles, citations, and order.
+Do not change anything else in the file — preserve every user edit to titles, citations, dependencies, Epic order, and story order.
 
 #### 13. Summarize in chat
 
-Print a concise summary: the Epic key, the count of created stories, the count of created sub-tasks (broken down per stack), the list of story keys, the list of sub-task keys, and the path to the updated `plano-<slug>.md`. Include a direct link to the Epic in Jira if the MCP response includes one or if `cloud_url` is set in `.spec-to-jira.yaml`.
+Print a concise summary, grouped per Epic. For each Epic: its key + name, the count of created stories under it, the count of created sub-tasks under it (broken down per stack), the list of created story keys, and the list of created sub-task keys. After the per-Epic breakdown, include the total counts across all Epics and the path to the updated `plano-<slug>.md`. Include a direct link to each Epic in Jira if the MCP response includes one or if `cloud_url` is set in `.spec-to-jira.yaml`.
+
+Flag explicitly in the summary:
+
+- Any **Epic that failed to create** (and the resulting skipped Stories / Sub-tasks under it).
+- Any **orphaned sub-task** (parent annotation does not resolve within the same Epic).
+- Any **real-key Story line the user moved between Epics** — note that Jira and file are now out of sync because this slice does not re-parent existing Stories.
 
 If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, mention it explicitly so the user knows to review and commit the file.
 
@@ -350,14 +411,16 @@ If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, m
 - If the user **deletes** `plano-<slug>.md` during the pause, Phase 2 cannot proceed — the plan is gone. When the user types `ok`, tell them the file is missing and stop. The user can re-invoke the skill to start over.
 - If the plan file is **malformed** when Phase 2 re-reads it (missing H1, broken metadata header, empty Stories section, mismatched `Jira project` value), stop and tell the user exactly which section is malformed. Do not guess.
 - If the plan file reads `Status: applied`, the plan was already pushed to Jira on a prior run. Warn the user that re-running will create duplicate issues and require an explicit re-confirmation before proceeding. The skill does not deduplicate.
-- If Story creation fails partway through, do not roll back created issues (this slice never deletes). Continue to Sub-task creation for whatever Stories did succeed. Update `plano-<slug>.md` with whatever was created so the user can see the partial state, and clearly mark which user stories failed (append ` — ❌ <reason>` to the failed line and leave its `[TBD]` placeholder in place) so the user can fix and re-run.
+- If Epic creation fails for one milestone, do not abort the run — leave the Epic heading untouched, append ` — ❌ <reason>` to it, skip Story and Sub-task creation for that Epic, and continue with the next Epic. This slice never deletes already-created Epics to "match" the file state.
+- If Story creation fails partway through, do not roll back created issues (this slice never deletes). Continue to Sub-task creation for whatever Stories did succeed within the same Epic. Update `plano-<slug>.md` with whatever was created so the user can see the partial state, and clearly mark which user stories failed (append ` — ❌ <reason>` to the failed line and leave its `[TBD]` placeholder in place) so the user can fix and re-run.
 - If Sub-task creation fails for a particular line, log it inline (append ` — ❌ <reason>` to the line, leave the `[TBD]` placeholder in place, and write `❌ <reason>` in the corresponding matrix cell instead of `✅ <citation>`) and move on. Do not abort the whole run for a single Sub-task failure.
+- If a sub-task is **orphaned** (its parent annotation does not resolve to any Story in the same Epic), append ` — ⚠️ orphan parent` to the line, leave the `[TBD]` placeholder in place, skip creation, and surface the orphan in the chat summary. Do not auto-fix by reassigning across Epics.
 
 ## Out of scope for this slice
 
-- Multi-milestone handling — this slice always creates exactly one Epic.
-- Full idempotent re-runs — re-running on an `applied` plan will warn the user but otherwise create duplicate Jira issues if the user confirms. The only resume case this slice handles natively is a paused plan where some lines already carry real keys (e.g., the Epic was created on a prior turn but Stories were not) — Phase 2 detects real keys per line and skips creation for those lines, but still creates everything else.
+- Full idempotent re-runs — re-running on an `applied` plan will warn the user but otherwise create duplicate Jira issues if the user confirms. The only resume case this slice handles natively is a paused plan where some lines / Epic headings already carry real keys (e.g., one Epic was created on a prior turn but its Stories were not) — Phase 2 detects real keys per heading and per line and skips creation for those items, but still creates everything else.
 - Tech specs organized per user story (Type-2). Only Type-1 (per stack) is supported in this slice.
-- Creating "blocks" / "is blocked by" links between issues. The link type names are persisted in `.spec-to-jira.yaml` so future slices can use them, but this slice does not create any link.
+- Creating "blocks" / "is blocked by" links between Epics. The per-Epic `Depends on:` list is persisted in the plan file and copied into each Epic's Jira description for visibility, and the link type names are persisted in `.spec-to-jira.yaml`, but this slice does **not** create any Jira link issue. A future slice will turn `Depends on:` into real links.
+- Re-parenting Stories or Sub-tasks across Epics when the file already has real keys. The first run honors the file's structure; once a Story is in Jira, moving its line to a different Epic in the file does not move the Jira issue. Phase 2 surfaces this divergence in the summary but does not act on it.
 - Auto-refresh: once the PRD or tech spec content is captured in Phase 1 step 2, the skill operates on that snapshot. If the source document changes later, the user must re-run the skill to pick up the change.
 - Live syncing between the plan file and Jira after Phase 2 completes — edits to the plan file after `Status:` flips to `applied` do not propagate back to Jira. The user would need a fresh run.
