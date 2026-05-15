@@ -53,6 +53,8 @@ invoked.
 
 | Skill | What it does |
 |---|---|
+| `sec-consult` | Generate a security consult ticket from a tech spec, PRD, or project reference |
+| `spec-to-jira` | Turn a PRD + tech spec into an idempotent Jira hierarchy (Epics, Stories, Sub-tasks) with gap detection and dependency inference |
 | `to-issues` | Break a plan or PRD into vertical-slice GitHub issues |
 | `to-prd` | Synthesize the current conversation into a PRD GitHub issue |
 | `triage-issue` | Investigate a bug, find root cause, and file a GitHub issue with a TDD-based fix plan |
