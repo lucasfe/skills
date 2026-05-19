@@ -72,6 +72,21 @@ stacks:
   - name: pm                # virtual stack — project-management work, not a real engineering stack
     label: stack:pm
     title_prefix: "[pm]"
+  - name: qa                # virtual stack — QA test plans, one per story
+    label: stack:qa
+    title_prefix: "[qa]"
+    assignee: ""            # display name of the default QA assignee (looked up via Jira user search)
+
+# Per-stack default assignees — when set, Phase 2 assigns newly created
+# Sub-tasks (and QA test plan sub-tasks) to the named person on creation.
+# Stories are assigned to the `story_assignee` if set.
+# Assignees are ONLY set on creation, never on updates or re-runs.
+assignees:
+  story_assignee: ""        # display name for all new Stories (optional)
+  stack_overrides:          # per-stack assignee overrides (optional)
+    # cloud: "Alice Smith"
+    # web: "Bob Jones"
+    # qa: "Lara Monteiro"
 ```
 
 Notes on `team.yaml`:
@@ -79,6 +94,7 @@ Notes on `team.yaml`:
 - The matrix columns and the Sub-task iteration follow the order in which stacks appear in `team.yaml`. Reordering the list reorders the matrix.
 - The same order also drives the **default multi-stack dependency direction**: when a story is covered in two or more stacks, the skill proposes `blocks` links from the earlier stack to the later stack (e.g., `cloud → web → data → pm` with the default ordering). The user can flip, edit, or delete those proposals during review.
 - The `pm` stack is **virtual**: it represents project-management work (rollout coordination, comms, milestone tracking) rather than an engineering stack. It uses the same Sub-task mechanic — the inverted scan can map "pm" coverage to tech-spec sections describing rollout / comms / coordination work, and unresolved gaps the user marks as real gaps in **Pendências PM** are tracked as additional `pm` Sub-tasks in Phase 2.
+- The `qa` stack is **virtual**: it represents QA test plan work. When present in `team.yaml`, the skill **automatically generates one QA test plan Sub-task per Story** in Phase 1 (step 5c). Each QA Sub-task summarizes the key test scenarios derived from the Story's acceptance criteria and the tech spec's test plan section. QA Sub-tasks are always generated — they do not depend on the coverage matrix scan. If `team.yaml` has an `assignee` field on the `qa` stack entry, Phase 2 assigns newly created QA Sub-tasks to that person. The `qa` stack does NOT appear as a column in the coverage matrix — it is always present (one per Story) and therefore not gap-tracked.
 - `component` is **optional**. When set, the skill attaches the corresponding Jira component to each Sub-task in that stack (subject to the project's component configuration). When absent, no component is attached.
 - Users can add, remove, or rename stacks in `team.yaml` between runs. The next run picks up the new vocabulary automatically — the matrix layout follows.
 
@@ -197,6 +213,11 @@ For each detected milestone, derive its own list of well-defined user stories fr
 
 Stories that appear in a "shared", "cross-cutting", or otherwise milestone-agnostic section of the PRD are assigned to **Milestone 1** by default. The user can move them in the review step.
 
+For each derived user story, also extract:
+
+- **PRD reference**: the specific PRD section / user story ID (e.g., "4.2.11") that drives this story, including a short quoted excerpt of the relevant requirement text and a link back to the PRD source document. When multiple PRD sections apply, list all of them. This reference is included in the Story's Jira description (see step 10) so reviewers can trace back to the requirement.
+- **Acceptance criteria**: a checklist of concrete, testable conditions that must be true for the story to be considered complete. Derive these from the PRD's functional requirements, the tech spec's success metrics, and the tech spec's design constraints. Each criterion should be a single, verifiable statement (not a vague goal). These are included in the Story's Jira description as a bulleted checklist.
+
 Also capture, per milestone, any **dependencies** declared in the PRD — e.g. "Milestone 2 depends on Milestone 1", "blocked by the auth rollout in Phase 1", "requires X to ship first". Record them as a list of milestone numbers / names that the current milestone depends on. If a stated dependency points at a milestone not present in the PRD, keep it as a free-text note; do not invent dependencies. The user can edit the dependency list during review. The skill does **not** create the corresponding Jira "blocks" links between Epics — the per-Epic dependency list is informational and persisted in the plan file and in each Epic's Jira description (Epic-level Jira links are reserved for a future version).
 
 #### 4. Identify the tech spec's stack sections
@@ -268,6 +289,25 @@ Only propose dependencies **within the same Epic** — cross-Epic Sub-task ↔ S
 
 Do not invent dependencies. Pre-check only the proposals you're confident about; leave anything ambiguous unchecked.
 
+#### 5c. Generate QA test plan Sub-tasks (one per Story)
+
+Only run this step if `team.yaml` defines a `qa` stack entry. If `qa` is not present, skip this step entirely.
+
+For each derived user story (across all milestones), generate a QA test plan Sub-task:
+
+- **Summary**: `[qa] Test plan: <Story summary>` — using the same summary derivation as other Sub-tasks.
+- **Description**: a list of key test scenarios derived from:
+  1. The Story's **acceptance criteria** (from step 3) — each criterion maps to one or more test cases.
+  2. The tech spec's **QA Validation/Test Plans** section — any test scenarios explicitly described for this Story's scope.
+  3. **Edge cases** inferred from the tech spec prose (error paths, timeouts, race conditions, graceful degradation).
+  The description should be concrete enough for a QA engineer to write test cases from, but not prescriptive about test tooling or framework.
+- **Stack**: always `qa`.
+- **Assignee**: the `assignee` field from the `qa` stack entry in `team.yaml`, if non-empty. Looked up via Jira user search (display name → accountId) on Phase 2 creation.
+
+QA Sub-tasks are appended to the `### Sub-tasks` subsection of each Epic, after the regular engineering Sub-tasks. They follow the same `- [TBD] [qa] Test plan: <summary> — parent [TBD] (story #N)` format as other Sub-tasks, so they participate in the same Phase 2 creation, idempotent re-sync, and orphan detection flows.
+
+QA Sub-tasks do **not** appear in the coverage matrix — the `qa` column is omitted from the matrix because QA coverage is guaranteed (one per Story, always generated). They also do not appear in **Pendências PM** (no gap tracking needed).
+
 #### 6. Write `plano-<slug>.md` with placeholder keys
 
 In the current working directory, write a file named `plano-<slug>.md`. The file format is identical to the final artifact produced in Phase 2 (see the template below), with one difference: every Jira key is still unknown at this point, so write the literal placeholder `[TBD]` everywhere a key would appear. The user will see those placeholders in the file; they are not asked to fill them in — Phase 2 replaces them with the real keys after creating the issues in Jira.
@@ -293,7 +333,16 @@ Depends on: (none)
 ### Stories
 
 1. [TBD] As a <actor>, I want <feature>, so that <benefit>
+   PRD: <section_id> — "<short quoted excerpt>"
+   Acceptance Criteria:
+   - <criterion 1>
+   - <criterion 2>
+   - ...
 2. [TBD] As a <actor>, I want <feature>, so that <benefit>
+   PRD: <section_id> — "<short quoted excerpt>"
+   Acceptance Criteria:
+   - <criterion 1>
+   - ...
 ...
 
 ### Matriz de cobertura
@@ -308,8 +357,10 @@ Depends on: (none)
 
 - [TBD] [<stack_1>] <Story summary_1> — parent [TBD] (story #1) — cites <tech spec section>
 - [TBD] [<stack_2>] <Story summary_1> — parent [TBD] (story #1) — cites <tech spec section>
+- [TBD] [qa] Test plan: <Story summary_1> — parent [TBD] (story #1)
 - [TBD] [<stack_2>] <Story summary_2> — parent [TBD] (story #2) — cites <tech spec section>
 - [TBD] [<stack_3>] <Story summary_2> — parent [TBD] (story #2) — cites <tech spec section>
+- [TBD] [qa] Test plan: <Story summary_2> — parent [TBD] (story #2)
 ...
 
 ### Pendências PM
@@ -484,7 +535,11 @@ For each Epic in turn, iterate every line still present in that Epic's `### Stor
 
 - **No key on the line** → **create**. Call `createJiraIssue` with `issueTypeName` set to `issue_types.story` from `.spec-to-jira.yaml`, linked to **that Epic's** key from step 9. Use whichever mechanism the project supports for parenting a Story to an Epic — the `Epic Link` custom field on classic projects, or the `parent` field on next-gen / team-managed projects. If the first attempt fails because the field is not available, retry with the other mechanism before giving up.
   - **Summary**: derived from the **user-edited** story sentence in the file — extract the `<feature>` clause from the `As a <actor>, I want <feature>, so that <benefit>` pattern when present; otherwise use the full edited sentence as the summary.
-  - **Description**: the full story sentence as written in the file plus any extra context the user kept in the file.
+  - **Description**: structured as:
+    1. **PRD Reference** section — the PRD section ID(s), a short quoted excerpt of the relevant requirement text, and a link back to the PRD source document (using `prd_identifier`). When multiple PRD sections apply, list all of them. This allows reviewers to trace the Story back to the driving requirement.
+    2. A short paragraph describing the Story's scope and purpose (the full story sentence plus any extra context the user kept in the file).
+    3. **Acceptance Criteria** section — a bulleted checklist of concrete, testable conditions derived in Phase 1 step 3. Each criterion is a single verifiable statement. The user may have edited, added, or removed criteria during the review pause — use whatever the file contains.
+  - **Assignee** (create only): if `team.yaml` has a non-empty `assignees.story_assignee`, look up the display name via the Jira user search API (`/rest/api/3/user/search?query=<name>`) to resolve the `accountId`, and set the `assignee` field on creation. If the lookup fails (user not found), skip the assignment silently and continue — do not block creation. Assignees are **only set on create**, never on updates or re-runs.
   A user who moved a story between Epics (cut from Epic 1's `### Stories`, pasted into Epic 2's `### Stories`) before approval — and whose line had **no** key when they moved it — will see the Story created under Epic 2's key here. The file's structure drives parenting, not any memory of the original Phase 1 assignment.
 - **Key on the line** → fetch the Story from Jira via `getJiraIssue` and compare:
   - **Mutable fields (summary, description, labels) all match the file** → **skip**. Use the existing key for sub-task parenting.
@@ -512,6 +567,11 @@ For a **checked `### Pendências PM` line** (an **accepted gap**), the **mutable
 Classification per line:
 
 - **No key on the line** → **create**. Use `createJiraIssue` with `issueTypeName` set to `issue_types.sub_task` from `.spec-to-jira.yaml`, parented to the resolved Story key from step 10 (parent resolution is scoped to the **same Epic** — see step 8 for the order). On create, also attach the **Component** if the matching stack has a non-empty `component` field in `team.yaml` (if the project does not have that component configured, skip the component silently and continue with the Sub-task creation). Components are **not** changed on later updates.
+  - **Assignee** (create only): resolve the assignee for this Sub-task using the following priority order:
+    1. If `team.yaml` has a non-empty `assignees.stack_overrides.<stack>` for this Sub-task's stack, use that display name.
+    2. Otherwise, if the stack entry in `team.yaml` has a non-empty `assignee` field (e.g., the `qa` stack's `assignee`), use that.
+    3. Otherwise, no assignee is set.
+    Look up the display name via the Jira user search API (`/rest/api/3/user/search?query=<name>`) to resolve the `accountId`. Cache user lookups within the run to avoid repeated API calls. If the lookup fails (user not found), skip the assignment silently and continue. Assignees are **only set on create**, never on updates or re-runs.
 - **Key on the line** → fetch the Sub-task from Jira via `getJiraIssue` and compare:
   - **Mutable fields (summary, description, labels) all match the file** → **skip**. Use the existing key for dependency resolution in step 11b.
   - **At least one mutable field diverges** → **update**. Call `editJiraIssue` exactly once with only the diverged fields. The parent reference is **not** re-sent on update — once a Sub-task is in Jira, the skill does not re-parent it. `status` and `assignee` are never sent.
@@ -682,7 +742,7 @@ If `.spec-to-jira.yaml` was newly written by the auto-detect flow on this run, m
 ## Out of scope
 
 - **Deleting Jira issues** when the corresponding line is removed from the `.md`. Orphaned Jira issues (key exists in Jira, line removed from file) are reported at the end of the run in the `## Orphans` block and the chat summary; the user closes, deletes, or re-links them in Jira directly. The skill never deletes Jira data automatically.
-- **Touching `status` or `assignee`** on any existing Jira issue. These fields are managed by the team in Jira, not by the skill. Only the fields explicitly listed as "mutable" in Phase 2 (summary, description, labels, parent / Epic Link on create, and link relations) are ever written by the skill on existing issues. Components are written on create only.
+- **Touching `status` or `assignee`** on any **existing** Jira issue. These fields are managed by the team in Jira, not by the skill. The `assignee` field is set **only on initial creation** (when `team.yaml` defines `assignees.story_assignee` or `assignees.stack_overrides` or a stack-level `assignee`), and is never updated or cleared on subsequent re-runs. Only the fields explicitly listed as "mutable" in Phase 2 (summary, description, labels, parent / Epic Link on create, and link relations) are ever written by the skill on existing issues. Components are written on create only.
 - **Three-way merging** of edits that originated outside the skill. If a teammate edits a Story title directly in Jira and the `.md` was untouched between runs, the next idempotent re-run will overwrite Jira back to whatever the `.md` says (the `.md` is the source of truth). The skill does not detect or warn about external Jira edits, beyond surfacing them implicitly through the per-field divergence check.
 - **Removing existing Jira links** when the user unchecks or deletes a previously-applied Dependências line. The existing link stays in Jira; step 8a surfaces it as a `Link orphan` so the user can remove it manually.
 - **Re-parenting Stories or Sub-tasks across Epics** when the file already has real keys. The first run honors the file's structure; once a Story or Sub-task is in Jira, moving its line to a different Epic in the file does not move the Jira issue. Phase 2 surfaces the divergence in the summary but does not act on it.
