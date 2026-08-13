@@ -150,9 +150,17 @@ Writes tasks into a project's `.ralph/tasks/` tree for the local Ralph loop
 5. **Do not `git add` task files** — the `.ralph/` tree is gitignored; use plain
    `mkdir -p` and file writes. Create blocker slices with lower numbers so they
    are picked first.
-6. **PRD:** the PRD is not a Ralph task. Write it to
-   `<root>/.ralph/prd-<slug>.md` (also gitignored) and reference it from each
-   task body for shared context.
+6. **PRD:** the PRD is not a Ralph task, and it must NOT go in the gitignored
+   `.ralph/` tree — record it in a tracked location so it enters version control
+   for history comparison. Derive `<slug>` by kebab-casing the PRD's feature
+   title, `mkdir -p <root>/docs/prds/`, and write the PRD to
+   `<root>/docs/prds/<slug>.md`. On a re-run for the same feature, overwrite the
+   same file in place — rely on git diffs across commits for history, not
+   versioned filenames. Just write the file: do NOT `git add` and do NOT commit
+   it — the user handles version control themselves. Reference
+   `docs/prds/<slug>.md` from each task body for shared context. (Tasks stay in
+   the gitignored `.ralph/tasks/` tree; the PRD lives separately in tracked
+   `docs/prds/` — separate places by design.)
 
 ### Output: Plain markdown files
 
