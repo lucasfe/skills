@@ -28,6 +28,7 @@ The repo is consumed in three ways:
 │   ├── supabase-postgres-best-practices/ # Postgres optimization reference (8 rule categories)
 │   └── tdd/                           #   red-green-refactor vertical-slice TDD loop
 ├── project-management/                # project management skills
+│   ├── grill-to-issues/               #   grill → PRD → slices → output (GitHub/Ralph FS/markdown)
 │   ├── sec-consult/                   #   generate security consult ticket from specs
 │   ├── spec-to-jira/                  #   PRD + tech spec → idempotent Jira hierarchy
 │   ├── to-issues/                     #   plan → vertical-slice GitHub issues
@@ -71,6 +72,7 @@ Every skill is a folder inside a category directory:
 
 | Skill | Description |
 |---|---|
+| **grill-to-issues** | Chains a full planning pipeline: relentlessly grills the user (one question at a time, with recommendations), synthesizes a PRD, breaks it into HITL/AFK vertical-slice tracer-bullet issues, then pauses at a single checkpoint to review everything and pick an output target — GitHub issues, a Ralph filesystem `.ralph/tasks/` tree, or plain markdown files. Produces no side effects until the user chooses. |
 | **sec-consult** | Generates a security consult ticket from a tech spec, PRD, or project reference. Accepts Jira ticket IDs, Confluence URLs, or local files as input. Produces a structured consult text and a Jira-ready summary. |
 | **spec-to-jira** | Accepts a PRD + tech spec (local files, Google Docs, Jira key, or pasted content), detects milestones, derives user stories, builds a coverage matrix, identifies gaps, infers sub-task dependencies, writes a review plan file, then idempotently syncs the hierarchy to Jira. |
 | **to-issues** | Breaks a plan or PRD into independently-grabbable GitHub issues using vertical-slice tracer-bullet decomposition. Classifies slices as HITL (human-in-the-loop) or AFK (autonomous). Creates issues in dependency order. |
