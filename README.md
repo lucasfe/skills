@@ -64,7 +64,7 @@ invoked.
 
 | Skill | What it does |
 |---|---|
-| `sws-talent-review` | Turn a person's Work Summary doc (Google Docs or pasted text) plus your feedback into a balanced, LP-grounded performance summary; one person per round, appended to a combined markdown file |
+| `sws-talent-review` | Turn a person's Work Summary doc (Google Docs or pasted text) plus your feedback and ratings into a balanced, LP-grounded performance summary and a team-distribution ratings row; one person per round, appended to a combined markdown file |
 
 ### Meta
 

@@ -1,13 +1,14 @@
 ---
 name: sws-talent-review
-description: Turn a person's Work Summary doc plus your feedback into a balanced, LP-grounded performance summary; one person per round, appended to a combined markdown file. Use when writing team performance/talent-review summaries from Work Summary docs (Google Docs or pasted text).
+description: Turn a person's Work Summary doc plus your feedback into a balanced, LP-grounded performance summary and a team-distribution ratings row; one person per round, appended to a combined markdown file. Use when writing team performance/talent-review summaries from Work Summary docs (Google Docs or pasted text).
 ---
 
 # SWS Talent Review
 
 Turn one person's **Work Summary** (a Google Doc or pasted text) plus the
 manager's feedback into a balanced, evidence-backed performance summary, then
-append it to a single combined markdown file for the review cycle.
+append it to a single combined markdown file for the review cycle. The same
+file also carries a **team-distribution table** with one ratings row per person.
 
 Work **one person per round**. Never batch. Never write to disk until the
 manager approves the summary in chat.
@@ -62,25 +63,33 @@ incidents, peer comments — anything not already in the doc."**
 Accept free-form text. Do not auto-search Slack or other systems; this feedback
 is judgment-heavy and manager-provided.
 
-### Step 3 — Get the trending direction (sets tone)
+### Step 3 — Get the ratings (sets tone)
 
-Ask: **"How is this person trending — improving, or needing to improve?"**
+Ask: **"Ratings for the distribution table — Level, Performance, Potential,
+LPs, and OV (overall)?"**
 
-This calibrates tone and the weight given to growth areas. **Never state the
-rating or trend explicitly in the output** — it only shapes the writing.
-
-- **Improving / strong** → celebratory-but-balanced; strengths lead, growth
-  areas are genuine but lighter.
-- **Needing to improve** → honest and clear about gaps, still respectful and
-  constructive; growth areas are more prominent. Do not soften to the point of
-  dishonesty and do not name the rating.
+- **Store the values verbatim.** Do not enforce a fixed scale or reject
+  unfamiliar values; these rubrics vary by org and cycle. Level is usually
+  5/6, Performance/Potential/LPs are small integers, and OV is a bucket code
+  (e.g. `LE`, `HV1`, `HV2`, `HV3`, `TT`).
+- These populate the **team-distribution table** (see Persistence). They are
+  **never stated anywhere in the prose summary**.
+- **Derive the prose tone from the OV value:**
+  - `LE` → needs-improvement lean: honest and clear about gaps, still
+    respectful and constructive; growth areas are more prominent. Do not soften
+    to the point of dishonesty.
+  - `HV1` → balanced, with growth areas prominent.
+  - `HV2` → positive and balanced.
+  - `HV3` / `TT` → strongly celebratory-but-balanced; strengths lead, growth
+    areas are genuine but lighter.
+  - Any unfamiliar OV value → balanced default.
 
 ### Step 4 — Generate, iterate, then persist
 
 1. Write the summary using the **Output template** and **Style rules** below.
 2. Present it in chat. Iterate on the manager's edits — expect several passes.
-3. **Only after the manager approves**, append it to the combined file (see
-   **Persistence**).
+3. **Only after the manager approves**, append the prose section and upsert the
+   distribution row (see **Persistence**).
 4. Offer to start another person, reusing the same combined file and period.
 
 ## Output template
@@ -109,13 +118,14 @@ then a one-line characterization of the person.
 ```
 
 The number of thematic strength sections flexes with the available material.
-The prominence of growth areas flexes with the trending direction from Step 3.
+The prominence of growth areas flexes with the OV-derived tone from Step 3.
 
 ## Style rules
 
 - **No em dashes.** Use commas, parentheses, or periods instead. This is the
   single most common backslide — do not use `—` anywhere in the summary body.
-- **Never state the rating or trending direction.** It only shapes tone.
+- **Never state the ratings** (Performance, OV, etc.) or the tone in the prose.
+  They live only in the distribution table and only shape tone.
 - **Balanced.** Real positives plus genuine growth areas (the doc template
   itself asks for a balanced record).
 - **Concrete evidence** pulled from the doc: ticket numbers, metrics, project
@@ -128,22 +138,45 @@ The prominence of growth areas flexes with the trending direction from Step 3.
 
 ## Persistence
 
-The combined file holds every person's summary for one review cycle.
+The combined file holds a team-distribution table plus every person's prose
+summary for one review cycle.
 
 1. **Discover the folder.** Scan the working directory (and one level down) for
-   an existing folder that already contains performance-summary `.md` files or
-   is named like `summaries/`, `performance/`, `reviews/`, or `work-summaries/`.
-   Suggest the best candidate and **ask for confirmation**. If none exists,
-   propose creating `./performance-summaries/` and confirm before creating it.
-   ("Repo" here just means the current working directory.)
+   an existing folder that either already contains performance-summary `.md`
+   files or is named like `summaries/`, `performance/`, `reviews/`, or
+   `work-summaries/`. Suggest the best candidate and **ask for confirmation**.
+   If none exists, propose creating `./performance-summaries/` and confirm
+   before creating it. ("Repo" here just means the current working directory.)
 2. **File name:** `<year>-<period>-performance-summaries.md`
    (e.g. `2026-H1-performance-summaries.md`), derived from the inferred period.
    Reuse the same file for every person in the session.
-3. **Write only after approval** (Step 4). Never auto-write on first generation.
-4. **Idempotent append:** if a section for this person already exists in the
-   file (match on their `<Name> — Performance Summary` header), **confirm with
-   the manager before replacing it in place**. Otherwise append a new section
-   separated by `---`.
+3. **File layout** — the distribution table sits at the very top, above all
+   prose sections:
+   ```markdown
+   # <year> <period> Performance Summaries
+
+   ## Team distribution
+
+   | Name | Level | Performance | Potential | LPs | OV |
+   |---|---|---|---|---|---|
+   | <Name> | <level> | <perf> | <pot> | <lps> | <ov> |
+
+   ---
+
+   **<Name> — Performance Summary (<period>)**
+   ...prose...
+   ```
+4. **Write only after approval** (Step 4). Never auto-write on first generation.
+5. **Idempotent upsert, under one confirmation:** when the manager approves,
+   both the distribution row and the prose section are written together.
+   - **Distribution row:** if a row for this person already exists (match on
+     Name), replace it in place; otherwise append a new row to the table.
+   - **Prose section:** if a section for this person already exists (match on
+     their `<Name> — Performance Summary` header), replace it in place;
+     otherwise append a new section separated by `---`.
+   - If either already exists, **confirm with the manager before overwriting**
+     (a single confirmation covers both the row and the section).
+   - The Name used in the table row must match the prose section's name.
 
 ## Notes
 
