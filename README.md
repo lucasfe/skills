@@ -56,6 +56,7 @@ invoked.
 | `grill-to-issues` | Run a full planning pipeline — grill the user, synthesize a PRD, break it into vertical slices, then output to GitHub, a Ralph filesystem task tree, or markdown files |
 | `sec-consult` | Generate a security consult ticket from a tech spec, PRD, or project reference |
 | `spec-to-jira` | Turn a PRD + tech spec into an idempotent Jira hierarchy (Epics, Stories, Sub-tasks) with gap detection and dependency inference |
+| `sws-talent-review` | Turn a person's Work Summary doc (Google Docs or pasted text) plus your feedback into a balanced, LP-grounded performance summary; one person per round, appended to a combined markdown file |
 | `to-issues` | Break a plan or PRD into vertical-slice GitHub issues |
 | `to-prd` | Synthesize the current conversation into a PRD GitHub issue |
 | `triage-issue` | Investigate a bug, find root cause, and file a GitHub issue with a TDD-based fix plan |
