@@ -117,11 +117,19 @@ the role guidelines / Leadership Principles where relevant.
 then a one-line characterization of the person.
 ```
 
-The number of thematic strength sections flexes with the available material.
-The prominence of growth areas flexes with the OV-derived tone from Step 3.
+The number of thematic strength sections flexes with the available material,
+but stays within the length budget below (usually two to three strength
+sections, not five). The prominence of growth areas flexes with the OV-derived
+tone from Step 3.
 
 ## Style rules
 
+- **Length: aim for ~250 words; never more than one page.** The whole summary
+  (opening + narrative + strength sections + growth areas + closer) should read
+  in under a minute. Target roughly 250 words, treat ~300 as a hard ceiling, and
+  never spill past a single page. Be selective: pick the highest-signal projects
+  and evidence rather than cataloguing everything. Tighten prose, drop
+  redundant ticket lists, and merge thin sections before exceeding the budget.
 - **No em dashes.** Use commas, parentheses, or periods instead. This is the
   single most common backslide — do not use `—` anywhere in the summary body.
 - **Never state the ratings** (Performance, OV, etc.) or the tone in the prose.
