@@ -84,13 +84,101 @@ slices must finish first), and **User stories covered**.
 
 ## Phase 4 — Review and output (THE ONLY CHECKPOINT)
 
-Present the PRD and the numbered slice breakdown together. Ask the user:
+Present the PRD and the numbered slice breakdown together as text, then ask both
+checkpoint questions with the **AskUserQuestion tool** — never as free-form prose
+questions. Both questions go in **ONE AskUserQuestion call**, in this order, so
+the user answers them together and submits once.
 
-- Does the granularity feel right? Are dependencies correct? Any splits/merges?
-- Are the HITL/AFK classifications right?
+<question-format-rules>
+- Always AskUserQuestion — both checkpoint questions in a single call, so the user
+  picks by number instead of typing and submits both answers at once.
+- Options must be **concrete and tailored to this run** — name the actual slices
+  ("Merge 1 and 2", "Split slice 2 by surface", "Drop slice 3"), never generic
+  filler like "Looks good" / "Change something".
+- Put the recommended option first and lead with it.
+- Attach a `preview` to every option that produces a concrete artifact: the exact
+  commands, paths, or resulting slice list that choosing it yields. Previews
+  render as monospace, so lay them out as a small ASCII block — one line per
+  slice, with issue/task number, short title, and HITL/AFK tag aligned in
+  columns.
+- Keep `header` ≤ 12 chars (e.g. "Review", "Output").
+- Single-select (`multiSelect: false`) — previews only render for single-select,
+  and max 4 options, so keep the list tight.
+- EVERY option gets a preview. "No preview available" on a checkpoint question
+  means the question was built wrong.
+- The user can always pick "Other" to steer freely — do not add your own
+  escape-hatch option.
+</question-format-rules>
 
-Iterate until approved. Then ask **where to output** — offer these three
-targets and follow the matching section. Write NOTHING until they choose.
+**Question 1 — slice review.** Header "Review". Ask whether the breakdown looks
+right (granularity, dependencies, HITL/AFK calls). First option approves as-is;
+the rest are the 1–3 most plausible concrete edits you would consider. Each
+option's preview is **the resulting slice list after that edit** — renumbered, so
+the user sees the actual outcome rather than a description of it.
+
+Example — options `Approved as-is` / `Merge 1 and 2` / `Split slice 2 by surface`
+/ `Drop slice 3`, with the preview for "Merge 1 and 2":
+
+```
+1 — labels.js + rename + parity test   AFK
+2 — legacy warning in ralph start      AFK
+3 — README rename + upgrade section    AFK
+4 — migrate this repo's labels         HITL
+```
+
+**Question 2 — output target.** Header "Output". Phrase it around the real
+counts, e.g. "Where should I write the PRD and the five slices?" Options are the
+three targets below, each with a preview of exactly what it will do:
+
+```
+gh issue create × 5 (+1 optional PRD parent)
+   → #N   labels.js single source of truth   AFK
+   → #N+1 flip the names                     AFK
+   → #N+2 legacy warning in ralph start      AFK
+   → #N+3 README rename + upgrade section    AFK
+   → #N+4 migrate this repo's labels         HITL
+```
+
+`2. Ralph filesystem tasks`
+
+```
+docs/prds/ralph-label-rename.md  (PRD, tracked)
+.ralph/tasks/afk/todo/
+   → 007-labels-js-source-of-truth.md   AFK
+   → 008-flip-the-names.md              AFK
+   → 009-legacy-warning-ralph-start.md  AFK
+   → 010-readme-rename-upgrade.md       AFK
+.ralph/tasks/hitl/todo/
+   → 011-migrate-this-repos-labels.md   HITL
+```
+
+`3. Plain markdown files`
+
+```
+<dir>/prd-ralph-label-rename.md
+   → 01-labels-js-source-of-truth.md    AFK
+   → 02-flip-the-names.md               AFK
+   → 03-legacy-warning-ralph-start.md   AFK
+   → 04-readme-rename-upgrade.md        AFK
+   → 05-migrate-this-repos-labels.md    HITL
+```
+
+Use the real numbers, slugs, and paths for the run at hand — for Ralph, the task
+numbers you computed in step 3 of that section, not placeholders.
+
+**Handling the two answers together.** Question 2's previews are built from the
+breakdown as it stands, so a Question 1 edit shifts the numbers shown there. That
+is fine — the target choice does not depend on granularity. On submit:
+
+- Q1 approved as-is → go straight to the chosen output section and write.
+- Q1 chose an edit → apply it, then re-ask **only Question 1** (single question,
+  same format) against the revised list. Keep the Q2 answer; do not re-ask it.
+  Repeat until approved, then write.
+
+Never write to the target before Question 1 is approved, even though its answer
+arrived in the same submission.
+
+Then follow the matching section. Write NOTHING until they choose.
 
 ### Output: GitHub issues
 
