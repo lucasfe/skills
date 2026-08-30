@@ -53,6 +53,7 @@ invoked.
 
 | Skill | What it does |
 |---|---|
+| `bug-to-issues` | Take an already-filed bug (GitHub, Jira, or Ralph folder task — resolved from `ralph.config.sh`), diagnose root cause, then output fix slices to GitHub, a Ralph task tree, or markdown files |
 | `grill-to-issues` | Run a full planning pipeline — grill the user, synthesize a PRD, break it into vertical slices, then output to GitHub, a Ralph filesystem task tree, or markdown files |
 | `sec-consult` | Generate a security consult ticket from a tech spec, PRD, or project reference |
 | `spec-to-jira` | Turn a PRD + tech spec into an idempotent Jira hierarchy (Epics, Stories, Sub-tasks) with gap detection and dependency inference |
